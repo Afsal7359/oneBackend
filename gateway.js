@@ -25,10 +25,10 @@ const PORT = process.env.GATEWAY_PORT || 5000;
 // Public path prefix  ->  internal service target.
 // Targets come from .env so ports can be changed in one place.
 const services = [
-  { name: 'aligaah',   prefix: '/aligaah',   target: process.env.ALIGAAH_TARGET   || 'http://localhost:5050' },
-  { name: 'crunz',     prefix: '/crunz',     target: process.env.CRUNZ_TARGET     || 'http://localhost:5006' },
-  { name: 'ezone',     prefix: '/ezone',     target: process.env.EZONE_TARGET     || 'http://localhost:5003' },
-  { name: 'underdwag', prefix: '/underdwag', target: process.env.UNDERDWAG_TARGET || 'http://localhost:5008' },
+  { name: 'aligaah',   prefix: '/aligaah',   target: process.env.ALIGAAH_TARGET   || 'http://localhost:90001' },
+  { name: 'crunz',     prefix: '/crunz',     target: process.env.CRUNZ_TARGET     || 'http://localhost:9002' },
+  { name: 'ezone',     prefix: '/ezone',     target: process.env.EZONE_TARGET     || 'http://localhost:9003' },
+  { name: 'underdwag', prefix: '/underdwag', target: process.env.UNDERDWAG_TARGET || 'http://localhost:9004' },
 ];
 
 // --- Gateway's own routes (must be declared BEFORE the proxies) ---

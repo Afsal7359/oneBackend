@@ -38,7 +38,23 @@ function mapProduct(p) {
     img: (p.images && p.images[0]) || '',
     status: p.status,
     currency: p.currency || 'GBP',
+    // Extra identifiers so staff can tell similar products apart in the list
+    // (several underdawg products share a title, e.g. "Pocket sweater").
+    slug: p.slug || '',
+    ref: String(p._id).slice(-6).toUpperCase(),   // short human-quotable id
   };
+}
+
+/**
+ * The catalogue's real category list, read straight from the website's Product
+ * schema so the billing app's filter chips always match the shop. (The app used
+ * to ship a hardcoded grocery list — Beverages/Snacks/Dairy — which matched no
+ * underdawg product, so the chips filtered everything away.)
+ */
+function productCategories() {
+  const path = Product.schema.path('category');
+  const fromEnum = (path && path.enumValues) || [];
+  return fromEnum.length ? [...fromEnum] : [];
 }
 
 const mapParty = (c) => ({
@@ -57,6 +73,11 @@ const mapOrder = (o) => ({
   })),
   sub: o.sub, disc: o.disc, tax: o.tax, taxRate: o.taxRate,
   total: o.total, paid: o.paid, mode: o.mode, status: o.status, date: o.date,
+  voided: !!o.voided,
+  voidType: o.voidType || null,
+  voidReason: o.voidReason || '',
+  voidedAt: o.voidedAt || null,
+  refundDue: o.refundDue || 0,
 });
 
 const mapPayment = (p) => ({
@@ -134,8 +155,14 @@ router.get(
       getBillingSettings(),
     ]);
 
+    // Only offer categories that actually have products, in catalogue order —
+    // an empty chip that filters to nothing is just noise at the till.
+    const used = new Set(products.map((p) => p.category || 'other'));
+    const categories = productCategories().filter((c) => used.has(c));
+
     res.json({
       products: products.map(mapProduct),
+      categories,
       parties: parties.map(mapParty),
       orders: orders.map(mapOrder),
       payments: payments.map(mapPayment),
@@ -249,8 +276,118 @@ router.get(
   '/orders',
   asyncHandler(async (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 200, 1000);
-    const orders = await BillingOrder.find().sort({ date: -1 }).limit(limit).lean();
+    // ?trash=1 lists voided bills; by default only live ones.
+    const filter = req.query.trash === '1'
+      ? { voided: true }
+      : { voided: { $ne: true } };
+    const orders = await BillingOrder.find(filter).sort({ date: -1 }).limit(limit).lean();
     res.json(orders.map(mapOrder));
+  })
+);
+
+/* ------------------------------------------------------ void / restore ---- */
+/**
+ * Put the stock a bill consumed back on the shelf.
+ * Custom (ad-hoc) lines have no catalogue product, so they're skipped.
+ * Returns the touched product docs so the caller can save + return them.
+ */
+async function restockFromOrder(order, direction = +1) {
+  const ids = (order.items || []).filter((i) => !i.custom && i.pid).map((i) => i.pid);
+  if (!ids.length) return [];
+  const products = await Product.find({ _id: { $in: ids } });
+  const byId = new Map(products.map((p) => [String(p._id), p]));
+  const touched = new Map();
+
+  for (const it of order.items || []) {
+    if (it.custom || !it.pid) continue;
+    const p = byId.get(String(it.pid));
+    if (!p) continue;                       // product deleted since the sale
+    if (!p.variants || !p.variants.length) p.variants = [{ size: it.size || 'One Size', stock: 0 }];
+    const v = (it.size && p.variants.find((x) => x.size === it.size)) || p.variants[0];
+    v.stock = Math.max((v.stock || 0) + direction * (it.qty || 0), 0);
+    touched.set(String(p._id), p);
+  }
+  await Promise.all([...touched.values()].map((p) => p.save()));
+  return [...touched.values()];
+}
+
+/**
+ * Void a bill — 'deleted' (billed in error) or 'returned' (goods came back).
+ * Both unwind the sale identically:
+ *   • stock goes back to the exact size that was sold
+ *   • any amount still owed comes off the customer's balance
+ *   • the bill drops out of sales/reports (they filter voided)
+ * Nothing is destroyed: the bill moves to the trash and can be restored.
+ */
+router.post(
+  '/orders/:id/void',
+  asyncHandler(async (req, res) => {
+    const type = req.body?.type === 'returned' ? 'returned' : 'deleted';
+    const reason = String(req.body?.reason || '').slice(0, 300);
+
+    const order = await BillingOrder.findById(req.params.id);
+    if (!order) return res.status(404).json({ error: 'Invoice not found' });
+    if (order.voided) return res.status(400).json({ error: 'This bill is already in the trash' });
+
+    const products = await restockFromOrder(order, +1);
+
+    // Remove whatever is still outstanding from the customer's balance. Money
+    // already taken stays recorded as payments and is reported as refundDue.
+    const outstanding = Math.round(((order.total || 0) - (order.paid || 0)) * 100) / 100;
+    let party = null;
+    if (order.party) {
+      party = outstanding
+        ? await BillingParty.findByIdAndUpdate(order.party, { $inc: { bal: -outstanding } }, { new: true })
+        : await BillingParty.findById(order.party);
+    }
+
+    order.voided = true;
+    order.voidType = type;
+    order.voidReason = reason;
+    order.voidedAt = new Date();
+    order.voidedBy = req.billingUser._id;
+    order.refundDue = Math.round((order.paid || 0) * 100) / 100;
+    await order.save();
+
+    res.json({
+      order: mapOrder(order.toObject()),
+      products: products.map((p) => mapProduct(p.toObject())),
+      party: party ? mapParty(party) : null,
+    });
+  })
+);
+
+/** Bring a bill back out of the trash, re-applying stock and balance. */
+router.post(
+  '/orders/:id/restore',
+  asyncHandler(async (req, res) => {
+    const order = await BillingOrder.findById(req.params.id);
+    if (!order) return res.status(404).json({ error: 'Invoice not found' });
+    if (!order.voided) return res.status(400).json({ error: 'This bill is not in the trash' });
+
+    const products = await restockFromOrder(order, -1);   // take the stock back out
+
+    const outstanding = Math.round(((order.total || 0) - (order.paid || 0)) * 100) / 100;
+    let party = null;
+    if (order.party) {
+      party = outstanding
+        ? await BillingParty.findByIdAndUpdate(order.party, { $inc: { bal: outstanding } }, { new: true })
+        : await BillingParty.findById(order.party);
+    }
+
+    order.voided = false;
+    order.voidType = null;
+    order.voidReason = '';
+    order.voidedAt = null;
+    order.voidedBy = null;
+    order.refundDue = 0;
+    await order.save();
+
+    res.json({
+      order: mapOrder(order.toObject()),
+      products: products.map((p) => mapProduct(p.toObject())),
+      party: party ? mapParty(party) : null,
+    });
   })
 );
 
@@ -380,6 +517,7 @@ router.post(
     if (target.kind === 'order') {
       const order = await BillingOrder.findById(target.id);
       if (!order) return res.status(404).json({ error: 'Invoice not found' });
+      if (order.voided) return res.status(400).json({ error: 'This bill is in the trash — restore it first' });
 
       const due = money(order.total - order.paid);
       const applied = money(Math.min(amount, due));
@@ -484,7 +622,9 @@ router.get(
     from.setHours(0, 0, 0, 0);
 
     const [orders, expenses] = await Promise.all([
-      BillingOrder.find({ date: { $gte: from } }).lean(),
+      // Voided bills (deleted or returned) are NOT sales — they must never
+      // appear in revenue, profit, top items or any statement.
+      BillingOrder.find({ date: { $gte: from }, voided: { $ne: true } }).lean(),
       BillingExpense.find({ date: { $gte: from } }).lean(),
     ]);
 

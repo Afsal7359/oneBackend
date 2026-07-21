@@ -90,6 +90,22 @@ const billingOrderSchema = new mongoose.Schema(
     status: { type: String, enum: ['paid', 'partial', 'pending', 'overdue'], default: 'paid', index: true },
     date: { type: Date, default: Date.now, index: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'BillingUser' },
+
+    /* ---- void (trash) ----------------------------------------------------
+     * Bills are NEVER hard-deleted — a sale is a financial record. Voiding
+     * moves it to the trash, returns the stock, unwinds the customer's
+     * balance and removes it from sales/reports, while keeping the full
+     * audit trail (who, when, why) and allowing a restore.
+     *   'deleted'  = billed by mistake, should never have existed
+     *   'returned' = customer brought the goods back
+     */
+    voided: { type: Boolean, default: false, index: true },
+    voidType: { type: String, enum: ['deleted', 'returned'], default: null },
+    voidReason: { type: String, default: '' },
+    voidedAt: { type: Date },
+    voidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'BillingUser' },
+    // Money already taken that must be handed back (0 for an unpaid bill).
+    refundDue: { type: Number, default: 0 },
   },
   { timestamps: true }
 );
