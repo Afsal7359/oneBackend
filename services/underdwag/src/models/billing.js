@@ -156,6 +156,55 @@ const billingSettingsSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+/* ----------------------------------------------------------------- push ---- */
+/**
+ * One row per DEVICE (not per user) — a cashier may be signed in on a phone and
+ * a tablet, and each browser gives its own push endpoint. `endpoint` is unique
+ * so re-subscribing the same device updates rather than duplicating.
+ */
+const billingPushSubSchema = new mongoose.Schema(
+  {
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'BillingUser', index: true },
+    endpoint: { type: String, required: true, unique: true },
+    keys: {
+      p256dh: { type: String, required: true },
+      auth: { type: String, required: true },
+    },
+    userAgent: { type: String, default: '' },
+    label: { type: String, default: '' },      // friendly device name for admin
+    lastUsedAt: { type: Date, default: Date.now },
+    failCount: { type: Number, default: 0 },   // consecutive send failures
+  },
+  { timestamps: true }
+);
+
+/**
+ * Which notifications are switched on. Managed from the WEBSITE admin panel so
+ * the shop owner controls this without touching the till app.
+ */
+const notifySettingsSchema = new mongoose.Schema(
+  {
+    key: { type: String, default: 'default', unique: true },
+    enabled: { type: Boolean, default: true },        // master switch
+    events: {
+      websiteOrder: { type: Boolean, default: true },  // customer bought online
+      dailySummary: { type: Boolean, default: true },  // end-of-day totals
+      paymentReceived: { type: Boolean, default: false },
+      outOfStock: { type: Boolean, default: false },
+    },
+    // 24h clock, London time, for the daily summary.
+    dailySummaryHour: { type: Number, default: 20, min: 0, max: 23 },
+    // London YYYY-MM-DD of the last summary sent, so a restart can't re-send it.
+    lastDailySummary: { type: String, default: '' },
+    quietHours: {
+      enabled: { type: Boolean, default: false },
+      from: { type: Number, default: 22 },
+      to: { type: Number, default: 8 },
+    },
+  },
+  { timestamps: true }
+);
+
 /* ---------------------------------------------------------------- counter -- */
 /** Atomic sequence source for invoice numbers. */
 const billingCounterSchema = new mongoose.Schema({
@@ -170,6 +219,15 @@ export const BillingPayment = mongoose.model('BillingPayment', billingPaymentSch
 export const BillingExpense = mongoose.model('BillingExpense', billingExpenseSchema);
 export const BillingSettings = mongoose.model('BillingSettings', billingSettingsSchema);
 export const BillingCounter = mongoose.model('BillingCounter', billingCounterSchema);
+export const BillingPushSub = mongoose.model('BillingPushSub', billingPushSubSchema);
+export const NotifySettings = mongoose.model('NotifySettings', notifySettingsSchema);
+
+/** Load (creating on first run) the single notification-settings document. */
+export async function getNotifySettings() {
+  let s = await NotifySettings.findOne({ key: 'default' });
+  if (!s) s = await NotifySettings.create({ key: 'default' });
+  return s;
+}
 
 /**
  * Reserve the next invoice number atomically (safe under concurrent bills).

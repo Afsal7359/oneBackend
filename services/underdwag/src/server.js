@@ -20,6 +20,8 @@ import eventRoutes from './routes/events.js';
 import adminAnalyticsRoutes from './routes/adminAnalytics.js';
 import billingRoutes from './routes/billing.js';
 import adminBillingUserRoutes from './routes/adminBillingUsers.js';
+import adminNotificationRoutes from './routes/adminNotifications.js';
+import { startDailySummaryJob } from './services/dailySummary.js';
 
 const app = express();
 
@@ -62,6 +64,7 @@ app.use('/api/orders',             orderRoutes);
 // Mounted before '/api/admin' so the more specific path always wins, even if a
 // '/:id' style route is later added to adminRoutes.
 app.use('/api/admin/billing-users', adminBillingUserRoutes);
+app.use('/api/admin/notifications', adminNotificationRoutes);
 app.use('/api/admin',              adminRoutes);
 app.use('/api/admin/analytics',    adminAnalyticsRoutes);
 // Billing (NexBill) app — same port, same database, same product catalogue.
@@ -76,7 +79,11 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 connectDB()
-  .then(() => app.listen(PORT, () => console.log(`[server] running on :${PORT}`)))
+  .then(() => {
+    app.listen(PORT, () => console.log(`[server] running on :${PORT}`));
+    // End-of-day sales summary push (checks the clock every 15 min).
+    startDailySummaryJob();
+  })
   .catch((err) => {
     console.error('[server] failed to start', err);
     process.exit(1);

@@ -8,8 +8,9 @@ import asyncHandler from 'express-async-handler';
 import Product from '../models/Product.js';
 import {
   BillingUser, BillingParty, BillingOrder, BillingPayment, BillingExpense,
-  nextInvoiceNo, getBillingSettings, BillingSettings,
+  BillingPushSub, nextInvoiceNo, getBillingSettings, BillingSettings,
 } from '../models/billing.js';
+import { sendPush, sendPushSafe, pushAvailable, publicKey } from '../services/push.js';
 import { billingProtect, signBillingToken } from '../middleware/billingAuth.js';
 
 const router = express.Router();
@@ -486,6 +487,22 @@ router.post(
     // Persist stock changes only after the order is safely written.
     await Promise.all([...touched.values()].map((p) => p.save()));
 
+    // Anything that just hit zero is worth flagging to the shop.
+    const emptied = [...touched.values()].filter(
+      (p) => (p.variants || []).reduce((s, v) => s + (v.stock || 0), 0) === 0
+    );
+    if (emptied.length) {
+      sendPushSafe(
+        {
+          title: emptied.length === 1 ? 'Out of stock' : `${emptied.length} items out of stock`,
+          body: emptied.map((p) => p.title).slice(0, 3).join(', '),
+          tag: 'out-of-stock',
+          data: { kind: 'outOfStock' },
+        },
+        { event: 'outOfStock' }
+      );
+    }
+
     // Any unpaid remainder goes onto the customer's khata.
     let party = null;
     const due = money(total - paid);
@@ -533,6 +550,16 @@ router.post(
         party: order.party, order: order._id, amt: applied,
         mode: mode || 'Cash', createdBy: req.billingUser._id,
       });
+
+      sendPushSafe(
+        {
+          title: `Payment received · ${money(applied).toFixed(2)} GBP`,
+          body: `${order.no}${order.status === 'paid' ? ' — now fully paid' : ` · ${money(order.total - order.paid).toFixed(2)} still due`}`,
+          tag: `pay-${order._id}`,
+          data: { kind: 'paymentReceived', orderId: String(order._id) },
+        },
+        { event: 'paymentReceived' }
+      );
 
       return res.json({
         order: mapOrder(order),
@@ -725,6 +752,63 @@ router.get(
         pct: Math.round((v / modesTotal) * 100),
       })),
     });
+  })
+);
+
+/* ---------------------------------------------------------------- push ---- */
+/** The app needs the public VAPID key (and to know if push is configured). */
+router.get('/push/key', (_req, res) =>
+  res.json({ available: pushAvailable(), publicKey: publicKey() })
+);
+
+/** Register (or refresh) this device for notifications. */
+router.post(
+  '/push/subscribe',
+  asyncHandler(async (req, res) => {
+    const { endpoint, keys, label } = req.body || {};
+    if (!endpoint || !keys?.p256dh || !keys?.auth) {
+      return res.status(400).json({ error: 'Invalid push subscription' });
+    }
+    // Keyed on endpoint so re-subscribing the same device updates in place.
+    const sub = await BillingPushSub.findOneAndUpdate(
+      { endpoint },
+      {
+        $set: {
+          endpoint,
+          keys,
+          user: req.billingUser._id,
+          userAgent: String(req.headers['user-agent'] || '').slice(0, 300),
+          label: label || '',
+          lastUsedAt: new Date(),
+          failCount: 0,
+        },
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+    res.status(201).json({ ok: true, id: String(sub._id) });
+  })
+);
+
+/** Stop notifications for this device. */
+router.post(
+  '/push/unsubscribe',
+  asyncHandler(async (req, res) => {
+    const { endpoint } = req.body || {};
+    if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
+    await BillingPushSub.deleteOne({ endpoint });
+    res.json({ ok: true });
+  })
+);
+
+/** Send a test notification to every device (ignores enable/quiet settings). */
+router.post(
+  '/push/test',
+  asyncHandler(async (_req, res) => {
+    const r = await sendPush(
+      { title: 'underdawg Bill', body: 'Notifications are working ✅', tag: 'test' },
+      { force: true }
+    );
+    res.json(r);
   })
 );
 

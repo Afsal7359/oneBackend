@@ -4,6 +4,7 @@ import Product from '../models/Product.js';
 import Coupon from '../models/Coupon.js';
 import User from '../models/User.js';
 import { sendOrderConfirmation, sendAdminOrderNotification } from '../services/email.js';
+import { sendPushSafe } from '../services/push.js';
 
 export const createOrder = asyncHandler(async (req, res) => {
   const {
@@ -93,6 +94,21 @@ export const createOrder = asyncHandler(async (req, res) => {
     sendOrderConfirmation(order).catch((e) => console.error('order confirm email failed', e)),
     sendAdminOrderNotification(order).catch((e) => console.error('admin notify email failed', e)),
   ]);
+
+  // Ping the billing app so staff at the counter know a web order came in.
+  // Fire-and-forget: a push failure must never affect the customer's checkout.
+  const qty = (order.items || []).reduce((s, i) => s + (i.qty || i.quantity || 1), 0);
+  const who = shippingAddress?.fullName || shippingAddress?.name || email || 'Customer';
+  sendPushSafe(
+    {
+      title: `New website order · £${Number(order.total || 0).toFixed(2)}`,
+      body: `${qty} item${qty === 1 ? '' : 's'} · ${who}`,
+      tag: `order-${order._id}`,
+      url: '/',
+      data: { kind: 'websiteOrder', orderId: String(order._id) },
+    },
+    { event: 'websiteOrder' }
+  );
 });
 
 export const listOrders = asyncHandler(async (req, res) => {
