@@ -96,6 +96,9 @@ const mapExpense = (e) => ({
   mode: e.mode,
   note: e.note,
   date: e.date,
+  voided: !!e.voided,
+  voidReason: e.voidReason || '',
+  voidedAt: e.voidedAt || null,
 });
 
 /**
@@ -152,6 +155,8 @@ router.get(
       BillingParty.find().sort({ createdAt: 1 }).lean(),
       BillingOrder.find().sort({ date: -1 }).limit(limit).lean(),
       BillingPayment.find().sort({ date: -1 }).limit(1000).lean(),
+      // Load ALL expenses (incl. trashed) so the app's Trash view works
+      // client-side; the live list filters voided out, like orders do.
       BillingExpense.find().sort({ date: -1 }).limit(500).lean(),
       getBillingSettings(),
     ]);
@@ -584,8 +589,10 @@ router.post(
 /* ------------------------------------------------------------ expenses ---- */
 router.get(
   '/expenses',
-  asyncHandler(async (_req, res) => {
-    const list = await BillingExpense.find().sort({ date: -1 }).limit(500).lean();
+  asyncHandler(async (req, res) => {
+    // ?trash=1 lists trashed expenses; by default only live ones.
+    const filter = req.query.trash === '1' ? { voided: true } : { voided: { $ne: true } };
+    const list = await BillingExpense.find(filter).sort({ date: -1 }).limit(500).lean();
     res.json(list.map(mapExpense));
   })
 );
@@ -627,12 +634,35 @@ router.patch(
   })
 );
 
+// "Delete" soft-voids the expense — it moves to the trash instead of being
+// destroyed, and drops out of lists and reports. It can be restored.
 router.delete(
   '/expenses/:id',
   asyncHandler(async (req, res) => {
-    const e = await BillingExpense.findByIdAndDelete(req.params.id);
+    const e = await BillingExpense.findById(req.params.id);
     if (!e) return res.status(404).json({ error: 'Expense not found' });
-    res.json({ ok: true, id: req.params.id });
+    if (e.voided) return res.json(mapExpense(e));   // already trashed — idempotent
+    e.voided = true;
+    e.voidedAt = new Date();
+    e.voidReason = String(req.body?.reason || '').slice(0, 300);
+    e.voidedBy = req.billingUser._id;
+    await e.save();
+    res.json(mapExpense(e));
+  })
+);
+
+/** Bring a trashed expense back into the ledger. */
+router.post(
+  '/expenses/:id/restore',
+  asyncHandler(async (req, res) => {
+    const e = await BillingExpense.findById(req.params.id);
+    if (!e) return res.status(404).json({ error: 'Expense not found' });
+    e.voided = false;
+    e.voidReason = '';
+    e.voidedAt = null;
+    e.voidedBy = null;
+    await e.save();
+    res.json(mapExpense(e));
   })
 );
 
@@ -652,7 +682,7 @@ router.get(
       // Voided bills (deleted or returned) are NOT sales — they must never
       // appear in revenue, profit, top items or any statement.
       BillingOrder.find({ date: { $gte: from }, voided: { $ne: true } }).lean(),
-      BillingExpense.find({ date: { $gte: from } }).lean(),
+      BillingExpense.find({ date: { $gte: from }, voided: { $ne: true } }).lean(),
     ]);
 
     const revenue = orders.reduce((s, o) => s + (o.total || 0), 0);

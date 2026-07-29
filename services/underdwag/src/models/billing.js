@@ -132,6 +132,13 @@ const billingExpenseSchema = new mongoose.Schema(
     mode: { type: String, default: 'Cash' },
     note: { type: String, default: '' },
     date: { type: Date, default: Date.now, index: true },
+
+    // Soft-delete, matching how bills are voided: a deleted expense moves to
+    // the trash (out of lists and reports) but can be restored. Never hard-deleted.
+    voided: { type: Boolean, default: false, index: true },
+    voidReason: { type: String, default: '' },
+    voidedAt: { type: Date },
+    voidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'BillingUser' },
   },
   { timestamps: true }
 );
