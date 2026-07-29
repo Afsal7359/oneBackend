@@ -483,7 +483,7 @@ router.post(
       party: cid || undefined,
       items: lines,
       sub, disc: discount, taxRate: rate, tax: taxAmt, total, paid,
-      mode: ['Cash', 'UPI', 'Card', 'Credit'].includes(mode) ? mode : 'Cash',
+      mode: ['Cash', 'Stripe', 'Card', 'Credit'].includes(mode) ? mode : 'Cash',
       status: statusFor(total, paid, date),
       date,
       createdBy: req.billingUser._id,

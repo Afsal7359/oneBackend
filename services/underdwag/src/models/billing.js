@@ -86,7 +86,10 @@ const billingOrderSchema = new mongoose.Schema(
     tax: { type: Number, default: 0 },
     total: { type: Number, default: 0 },
     paid: { type: Number, default: 0 },
-    mode: { type: String, enum: ['Cash', 'UPI', 'Card', 'Credit'], default: 'Cash' },
+    // 'UPI' is retired (replaced by 'Stripe') but must stay accepted — bills
+    // written before the switch still hold it, and save() validates the whole
+    // doc, so a void/restore/payment on an old bill would otherwise throw.
+    mode: { type: String, enum: ['Cash', 'Stripe', 'Card', 'Credit', 'UPI'], default: 'Cash' },
     status: { type: String, enum: ['paid', 'partial', 'pending', 'overdue'], default: 'paid', index: true },
     date: { type: Date, default: Date.now, index: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'BillingUser' },
