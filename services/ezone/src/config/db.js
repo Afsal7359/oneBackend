@@ -17,10 +17,14 @@ const connectDB = async () => {
       // The database is ~80ms away; opening a fresh TLS connection mid-request
       // costs far more than the query itself. Keep a warm pool so no request
       // ever pays that handshake.
-      minPoolSize: 5,
+      minPoolSize: 2,
       maxPoolSize: 50,
       maxIdleTimeMS: 0,
-      waitQueueTimeoutMS: 5000,
+
+      // No waitQueueTimeoutMS on purpose. Capping how long a request may wait
+      // for a pooled connection sounds like sensible fail-fast behaviour, but
+      // the Atlas TLS handshake alone takes ~2.5s from here, so a 5s ceiling
+      // made every service fail to boot. The driver's default is to wait.
     });
     console.log(`✅ MongoDB connected: ${conn.connection.host}/${conn.connection.name}`);
   } catch (err) {

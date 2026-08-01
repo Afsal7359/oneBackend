@@ -20,12 +20,14 @@ const connectDB = async () => {
 
       // Keep sockets open and authenticated so a burst of traffic never pays
       // the ~2.5s TLS + handshake cost on the request path.
-      minPoolSize: 5,
+      minPoolSize: 2,
       maxPoolSize: 50,
       maxIdleTimeMS: 0,
 
-      // Fail a request quickly rather than queueing behind an exhausted pool.
-      waitQueueTimeoutMS: 5000,
+      // No waitQueueTimeoutMS on purpose. Capping how long a request may wait
+      // for a pooled connection sounds like sensible fail-fast behaviour, but
+      // the Atlas TLS handshake alone takes ~2.5s from here, so a 5s ceiling
+      // made every service fail to boot. The driver's default is to wait.
     });
     console.log(`MongoDB connected: ${conn.connection.host}`);
   } catch (err) {
