@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import slugify from 'slugify';
 import mongooseLeanVirtuals from 'mongoose-lean-virtuals';
+import { cloudinaryCleanupPlugin } from '../utils/cloudinaryCleanup.js';
 
 const imageSchema = new mongoose.Schema(
   {
@@ -104,5 +105,19 @@ productSchema.virtual('primaryImage').get(function primaryImage() {
 
 // Lets `.lean({ virtuals: true })` carry discountPercent / inStock into plain results.
 productSchema.plugin(mongooseLeanVirtuals);
+
+productSchema.index({ category: 1, isActive: 1, sortOrder: 1, createdAt: -1 });
+productSchema.index({ isActive: 1, isFeatured: 1, sortOrder: 1 });
+productSchema.index({ isActive: 1, price: 1 });
+
+// Product photos are freed when they leave the document — except any an order
+// or a customer review still displays.
+productSchema.plugin(cloudinaryCleanupPlugin, {
+  protectedBy: [
+    { model: () => mongoose.model('Order') },
+    { model: () => mongoose.model('Review') },
+    { model: () => mongoose.model('Cart') },
+  ],
+});
 
 export default mongoose.model('Product', productSchema);

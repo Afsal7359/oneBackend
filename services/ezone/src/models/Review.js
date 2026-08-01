@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { cloudinaryCleanupPlugin } from '../utils/cloudinaryCleanup.js';
 
 const reviewSchema = new mongoose.Schema(
   {
@@ -19,5 +20,11 @@ const reviewSchema = new mongoose.Schema(
 // sparse: true means null user values are excluded from uniqueness check
 // so multiple admin custom reviews (user: null) can exist for the same product
 reviewSchema.index({ product: 1, user: 1 }, { unique: true, sparse: true });
+
+// Product pages read approved reviews newest-first.
+reviewSchema.index({ product: 1, isApproved: 1, createdAt: -1 });
+
+// Customer-uploaded review photos are cleaned up with the review.
+reviewSchema.plugin(cloudinaryCleanupPlugin);
 
 export default mongoose.model('Review', reviewSchema);

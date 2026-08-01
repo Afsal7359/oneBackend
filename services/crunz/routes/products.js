@@ -1,22 +1,23 @@
 const router = require('express').Router();
 const Product = require('../models/Product');
 const adminAuth = require('../middleware/adminAuth');
+const { cache } = require('../utils/responseCache');
 
 // Public: all products (including out-of-stock — frontend shows OOS badge)
-router.get('/', async (req, res) => {
-  const products = await Product.find().sort('order');
+router.get('/', cache(['Product'], 60_000), async (req, res) => {
+  const products = await Product.find().sort('order').lean();
   res.json(products);
 });
 
 // Admin: all products
 router.get('/admin/all', adminAuth, async (req, res) => {
-  const products = await Product.find().sort('order');
+  const products = await Product.find().sort('order').lean();
   res.json(products);
 });
 
 // Public: single product
-router.get('/:id', async (req, res) => {
-  const product = await Product.findById(req.params.id);
+router.get('/:id', cache(['Product'], 60_000), async (req, res) => {
+  const product = await Product.findById(req.params.id).lean();
   if (!product) return res.status(404).json({ message: 'Product not found' });
   res.json(product);
 });

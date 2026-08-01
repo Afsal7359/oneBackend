@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import slugify from 'slugify';
+import { cloudinaryCleanupPlugin } from '../utils/cloudinaryCleanup.js';
 
 const variantSchema = new mongoose.Schema(
   {
@@ -11,7 +12,11 @@ const variantSchema = new mongoose.Schema(
 
 const productSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true, trim: true, index: 'text' },
+    // No `index: 'text'` here — MongoDB allows exactly one text index per
+    // collection, and the compound one declared below is the one we want.
+    // Declaring both made the compound index fail to build, so every search
+    // fell back to a full collection scan.
+    name: { type: String, required: true, trim: true },
     slug: { type: String, unique: true, index: true },
     sku: { type: String, unique: true, sparse: true },
     description: { type: String, default: '' },
@@ -76,5 +81,14 @@ productSchema.index({ isActive: 1, price: 1 });
 productSchema.index({ isActive: 1, rating: -1 });
 productSchema.index({ isActive: 1, sold: -1 });
 productSchema.index({ category: 1, isActive: 1 });
+
+// Product photos are removed from Cloudinary once they leave the document.
+// Orders keep the image they were placed with, so those are never swept.
+productSchema.plugin(cloudinaryCleanupPlugin, {
+  protectedBy: [
+    { model: () => mongoose.model('Order') },
+    { model: () => mongoose.model('Review') },
+  ],
+});
 
 export default mongoose.model('Product', productSchema);

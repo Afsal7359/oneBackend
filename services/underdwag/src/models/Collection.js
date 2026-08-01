@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import slugify from 'slugify';
+import { cloudinaryCleanupPlugin } from '../utils/cloudinaryCleanup.js';
 
 const collectionSchema = new mongoose.Schema(
   {
@@ -22,5 +23,11 @@ collectionSchema.pre('validate', function (next) {
   }
   next();
 });
+
+collectionSchema.index({ isActive: 1, order: 1 });
+collectionSchema.index({ isActive: 1, isFeatured: 1, order: 1 });
+
+// Collections carry a desktop and a mobile hero image; both are swept.
+collectionSchema.plugin(cloudinaryCleanupPlugin);
 
 export default mongoose.model('Collection', collectionSchema);

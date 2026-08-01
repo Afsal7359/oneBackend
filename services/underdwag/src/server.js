@@ -7,6 +7,7 @@ import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import { connectDB } from './config/db.js';
 import { notFound, errorHandler } from './middleware/errorHandler.js';
+import { serverTiming } from './utils/responseCache.js';
 
 import productRoutes from './routes/products.js';
 import collectionRoutes from './routes/collections.js';
@@ -27,6 +28,9 @@ const app = express();
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(compression());
+// Reports handler time separately from network time in the browser's network
+// panel; cached responses also carry `X-Cache: HIT`.
+app.use(serverTiming());
 
 const allowedOrigins = (process.env.CLIENT_URL || '')
   .split(',').map((s) => s.trim()).filter(Boolean);

@@ -3,12 +3,20 @@ require('express-async-errors');
 
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const path = require('path');
 const fs = require('fs');
 
 const connectDB = require('./config/db');
+const { serverTiming } = require('./utils/responseCache');
 
 const app = express();
+
+// JSON product/content payloads gzip to a fraction of their size, so there is
+// less to put on the wire. `Server-Timing` then reports how long the handler
+// itself took, which separates a slow endpoint from a slow network.
+app.use(compression());
+app.use(serverTiming());
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, 'uploads');

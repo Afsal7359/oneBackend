@@ -13,6 +13,13 @@ const path = require('path');
 const svc = (name) => path.join(__dirname, 'services', name);
 
 // Restart policy shared by every process.
+//
+// Keep `instances: 1` / `exec_mode: 'fork'`. Each service caches public GET
+// responses in its own memory and clears them when a model is written, which is
+// only correct while one process owns both the cache and the writes. Under
+// cluster mode a write handled by worker A would leave workers B/C serving the
+// old response until the TTL expired. Scaling out needs a shared invalidation
+// channel (Redis pub/sub) in utils/responseCache.js first — see the note there.
 const common = {
   instances: 1,
   exec_mode: 'fork',

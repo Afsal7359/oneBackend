@@ -57,7 +57,13 @@ for (const s of services) {
       changeOrigin: true,
       xfwd: true,          // forward client IP as X-Forwarded-* headers
       ws: true,
-      proxyTimeout: 60000,
+      // Uploads on a weak mobile connection can outlast a short timeout. When
+      // the proxy gave up at 60s the browser saw a dropped socket and reported
+      // it as "could not reach the server", which sent admins hunting the wrong
+      // problem. Images are compressed client-side now, so this is only a
+      // backstop — but it needs to be longer than the slowest realistic upload.
+      proxyTimeout: 180000,
+      timeout: 180000,
       // Strip the public prefix so the service receives the exact /api/... path
       // it was written for (e.g. /aligaah/api/products -> /api/products).
       pathRewrite: (path) => path.replace(new RegExp(`^${s.prefix}`), '') || '/',

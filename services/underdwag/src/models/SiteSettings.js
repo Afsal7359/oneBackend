@@ -1,4 +1,6 @@
 import mongoose from 'mongoose';
+import { cloudinaryCleanupPlugin } from '../utils/cloudinaryCleanup.js';
+
 const { Schema } = mongoose;
 
 const siteSettingsSchema = new Schema({
@@ -61,5 +63,13 @@ const siteSettingsSchema = new Schema({
     }],
   },
 }, { timestamps: true });
+
+// Hero art, story tiles, store photos and the craft image are all uploads.
+// `hero.desktop` / `hero.mobile` are named after the breakpoint rather than the
+// media, so they're listed explicitly — the rest are found by name.
+siteSettingsSchema.plugin(cloudinaryCleanupPlugin, {
+  mediaPaths: ['hero.desktop', 'hero.mobile'],
+  protectedBy: [{ model: () => mongoose.model('Product') }],
+});
 
 export default mongoose.model('SiteSettings', siteSettingsSchema);

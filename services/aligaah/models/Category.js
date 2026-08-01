@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const slugify = require('slugify');
+const { cloudinaryCleanupPlugin } = require('../utils/cloudinaryCleanup');
 
 const categorySchema = new mongoose.Schema(
   {
@@ -20,5 +21,9 @@ categorySchema.pre('validate', function (next) {
   }
   next();
 });
+
+categorySchema.index({ isActive: 1, order: 1, createdAt: 1 });
+
+categorySchema.plugin(cloudinaryCleanupPlugin);
 
 module.exports = mongoose.model('Category', categorySchema);

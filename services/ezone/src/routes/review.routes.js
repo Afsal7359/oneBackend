@@ -9,11 +9,12 @@ import {
   adminUpdateReview,
 } from '../controllers/review.controller.js';
 import { protect, admin } from '../middleware/auth.middleware.js';
+import { cache } from '../utils/responseCache.js';
 
 const router = express.Router();
 
 // Public
-router.get('/product/:productId', listProductReviews);
+router.get('/product/:productId', cache(['Review'], 120_000), listProductReviews);
 
 // Customer (protected)
 router.get('/can-review/:productId', protect, canReviewProduct);

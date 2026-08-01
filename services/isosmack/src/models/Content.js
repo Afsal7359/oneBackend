@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import slugify from 'slugify';
+import { cloudinaryCleanupPlugin } from '../utils/cloudinaryCleanup.js';
 
 /* ------------------------------------------------------------------ Banner */
 const bannerSchema = new mongoose.Schema(
@@ -146,6 +147,15 @@ const subscriberSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Banner art (desktop + mobile) and the story image on settings are uploads.
+// Replacing or deleting either frees the file it replaced.
+bannerSchema.plugin(cloudinaryCleanupPlugin);
+settingSchema.plugin(cloudinaryCleanupPlugin);
+
+// The storefront always reads active banners for a position, in sort order.
+bannerSchema.index({ isActive: 1, position: 1, sortOrder: 1 });
+pageSchema.index({ isActive: 1, showInFooter: 1, sortOrder: 1 });
 
 export const Banner = mongoose.model('Banner', bannerSchema);
 export const Page = mongoose.model('Page', pageSchema);

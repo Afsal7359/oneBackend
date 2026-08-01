@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { cloudinaryCleanupPlugin } from '../utils/cloudinaryCleanup.js';
 
 /**
  * Singleton document holding all site content & settings.
@@ -141,5 +142,9 @@ const settingSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Logo, favicon, hero image, deal banner and OG image are all Cloudinary
+// uploads — replacing any of them frees the one it replaced.
+settingSchema.plugin(cloudinaryCleanupPlugin);
 
 export default mongoose.model('Setting', settingSchema);

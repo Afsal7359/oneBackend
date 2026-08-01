@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const slugify = require('slugify');
+const { cloudinaryCleanupPlugin } = require('../utils/cloudinaryCleanup');
 
 const imageSchema = new mongoose.Schema(
   { url: String, publicId: String },
@@ -53,5 +54,25 @@ productSchema.virtual('primaryImage').get(function () {
 
 productSchema.set('toJSON', { virtuals: true });
 productSchema.set('toObject', { virtuals: true });
+
+/* ------------------------------------------------------------------ indexes */
+// One index per shape the storefront actually queries. Each covers its filter
+// *and* the sort, so Mongo answers from the index instead of loading every
+// product into memory to sort it.
+productSchema.index({ isActive: 1, createdAt: -1 });
+productSchema.index({ category: 1, isActive: 1, createdAt: -1 });
+productSchema.index({ isActive: 1, isFeatured: 1, createdAt: -1 });
+productSchema.index({ isActive: 1, isBestSeller: 1, createdAt: -1 });
+productSchema.index({ isActive: 1, isNewArrival: 1, createdAt: -1 });
+productSchema.index({ isActive: 1, price: 1 });
+productSchema.index({ isActive: 1, views: -1 });
+productSchema.index({ isActive: 1, sales: -1 });
+
+// Old photos are removed from Cloudinary when they leave a product. Order items
+// keep a copy of the image URL from purchase time, so anything an order still
+// references survives.
+productSchema.plugin(cloudinaryCleanupPlugin, {
+  protectedBy: [{ model: () => require('./Order') }],
+});
 
 module.exports = mongoose.model('Product', productSchema);

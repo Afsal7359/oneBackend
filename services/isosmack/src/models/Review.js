@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { cloudinaryCleanupPlugin } from '../utils/cloudinaryCleanup.js';
 
 const reviewSchema = new mongoose.Schema(
   {
@@ -39,5 +40,10 @@ reviewSchema.post('findOneAndUpdate', function afterUpdate(doc) {
 reviewSchema.post('findOneAndDelete', function afterDelete(doc) {
   if (doc) doc.constructor.syncProductRating(doc.product);
 });
+
+reviewSchema.index({ product: 1, isApproved: 1, createdAt: -1 });
+
+// Customer review photos are freed when the review is edited or removed.
+reviewSchema.plugin(cloudinaryCleanupPlugin);
 
 export default mongoose.model('Review', reviewSchema);

@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import slugify from 'slugify';
+import { cloudinaryCleanupPlugin } from '../utils/cloudinaryCleanup.js';
 
 const categorySchema = new mongoose.Schema(
   {
@@ -23,5 +24,7 @@ categorySchema.pre('validate', function (next) {
   }
   next();
 });
+
+categorySchema.plugin(cloudinaryCleanupPlugin);
 
 export default mongoose.model('Category', categorySchema);

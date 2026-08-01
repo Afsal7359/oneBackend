@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { cloudinaryCleanupPlugin } = require('../utils/cloudinaryCleanup');
 
 const reviewSchema = new mongoose.Schema(
   {
@@ -14,5 +15,11 @@ const reviewSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+reviewSchema.index({ isApproved: 1, order: 1, createdAt: -1 });
+reviewSchema.index({ product: 1, isApproved: 1, createdAt: -1 });
+
+// Reviewer avatars are Cloudinary uploads too — clean them up on edit/delete.
+reviewSchema.plugin(cloudinaryCleanupPlugin);
 
 module.exports = mongoose.model('Review', reviewSchema);

@@ -6,6 +6,7 @@ const Coupon = require('../models/Coupon');
 const User = require('../models/User');
 const Settings = require('../models/Settings');
 const { instance: razorpay, isConfigured: rzpConfigured } = require('../config/razorpay');
+const { notifyNewOrder } = require('../utils/email');
 
 // Attach the order to a user: the logged-in user if present, otherwise
 // find-or-create a "guest" account from the checkout email so their orders
@@ -138,6 +139,7 @@ const createOrder = asyncHandler(async (req, res) => {
     isPaid: false,
   }));
   await applySideEffects(order, c.couponDoc?.code);
+  notifyNewOrder(order); // deliberately not awaited — mail must never delay checkout
   res.status(201).json(order);
 });
 
@@ -219,6 +221,9 @@ async function markPaid(rzpOrderId, { paymentId, signature = '', method = '' }) 
   order.payment.error = '';
   await order.save();
   await applySideEffects(order);
+  // markPaid returns early when already paid, so verify + webhook both landing
+  // cannot send this twice.
+  notifyNewOrder(order);
   return order;
 }
 

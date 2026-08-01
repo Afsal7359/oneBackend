@@ -20,6 +20,7 @@ import settingRoutes from './routes/setting.routes.js';
 import blogRoutes from './routes/blog.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import { notFound, errorHandler } from './middleware/error.middleware.js';
+import { serverTiming } from './utils/responseCache.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +29,9 @@ const app = express();
 
 /* --------------------------- Security & Parsers --------------------------- */
 app.use(compression());
+// Reports handler time separately from network time in the browser's network
+// panel; cached responses also carry `X-Cache: HIT`.
+app.use(serverTiming());
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(
   cors({

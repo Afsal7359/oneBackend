@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { protect } from '../middleware/auth.js';
+import { cache } from '../utils/responseCache.js';
 import {
   listCollections,
   getCollection,
@@ -10,8 +11,8 @@ import {
 
 const router = Router();
 
-router.get('/', listCollections);
-router.get('/:idOrSlug', getCollection);
+router.get('/', cache(['Collection', 'Product'], 60_000), listCollections);
+router.get('/:idOrSlug', cache(['Collection', 'Product'], 60_000), getCollection);
 router.post('/', protect, createCollection);
 router.put('/:id', protect, updateCollection);
 router.delete('/:id', protect, deleteCollection);

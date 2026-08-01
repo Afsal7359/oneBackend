@@ -4,6 +4,7 @@ import rateLimit from 'express-rate-limit';
 import { protect, optionalAuth, adminOnly } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { uploadMiddleware } from '../services/upload.js';
+import { cache } from '../utils/responseCache.js';
 
 import * as auth from '../controllers/auth.controller.js';
 import * as user from '../controllers/user.controller.js';
@@ -56,14 +57,16 @@ accountRoutes.post('/wishlist/toggle', user.toggleWishlist);
 router.use('/account', accountRoutes);
 
 /* ------------------------------------------------------------------ catalog */
-router.get('/products', validate(product.listQuerySchema, 'query'), product.listProducts);
-router.get('/products/suggest', product.searchSuggest);
-router.get('/products/storefront', product.getStorefront);
-router.get('/products/:slug', product.getProduct);
-router.get('/products/:slug/reviews', review.listReviews);
+// Storefront reads dominate traffic; a write to any tagged model clears the
+// matching entries immediately, so nothing here can go stale.
+router.get('/products', cache(['Product', 'Category'], 60_000), validate(product.listQuerySchema, 'query'), product.listProducts);
+router.get('/products/suggest', cache(['Product'], 120_000), product.searchSuggest);
+router.get('/products/storefront', cache(['Product', 'Category', 'Banner', 'Setting'], 60_000), product.getStorefront);
+router.get('/products/:slug', cache(['Product', 'Category'], 60_000), product.getProduct);
+router.get('/products/:slug/reviews', cache(['Review'], 120_000), review.listReviews);
 
-router.get('/categories', category.listCategories);
-router.get('/categories/:slug', category.getCategory);
+router.get('/categories', cache(['Category', 'Product'], 60_000), category.listCategories);
+router.get('/categories/:slug', cache(['Category'], 60_000), category.getCategory);
 
 router.post('/reviews', protect, writeLimiter, review.createReview);
 router.patch('/reviews/:id', protect, review.updateReview);
@@ -93,9 +96,9 @@ router.post('/payments/failed', protect, payment.markPaymentFailed);
 // NOTE: the webhook is mounted in server.js with a raw body parser.
 
 /* ------------------------------------------------------------------ content */
-router.get('/site-config', content.getSiteConfig);
-router.get('/pages', content.listPages);
-router.get('/pages/:slug', content.getPage);
+router.get('/site-config', cache(['Setting', 'Banner'], 300_000), content.getSiteConfig);
+router.get('/pages', cache(['Page'], 300_000), content.listPages);
+router.get('/pages/:slug', cache(['Page'], 300_000), content.getPage);
 router.post('/contact', writeLimiter, content.submitContact);
 router.post('/subscribe', writeLimiter, content.subscribe);
 

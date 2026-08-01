@@ -12,6 +12,7 @@ import routes from './routes/index.js';
 import { notFound, errorHandler } from './middleware/error.js';
 import { razorpayWebhook } from './controllers/payment.controller.js';
 import { LOCAL_UPLOAD_DIR, cloudinaryEnabled } from './services/upload.js';
+import { serverTiming } from './utils/responseCache.js';
 
 const app = express();
 
@@ -50,6 +51,9 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(cookieParser());
 app.use(compression());
+// Reports handler time separately from network time in the browser's network
+// panel; cached responses also carry `X-Cache: HIT`.
+app.use(serverTiming());
 app.use(mongoSanitize());
 
 if (env.NODE_ENV !== 'test') app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));

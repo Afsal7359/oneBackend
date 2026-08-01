@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { cloudinaryCleanupPlugin } = require('../utils/cloudinaryCleanup');
 
 // Single-document collection holding global site settings the admin can edit.
 const settingsSchema = new mongoose.Schema(
@@ -42,5 +43,8 @@ settingsSchema.statics.getSingleton = async function () {
   if (!doc) doc = await this.create({ key: 'site' });
   return doc;
 };
+
+// Swapping the logo or favicon leaves the previous one unreferenced.
+settingsSchema.plugin(cloudinaryCleanupPlugin);
 
 module.exports = mongoose.model('Settings', settingsSchema);

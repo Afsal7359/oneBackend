@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { cloudinaryCleanupPlugin } = require('../utils/cloudinaryCleanup');
 
 const bannerSchema = new mongoose.Schema(
   {
@@ -14,5 +15,11 @@ const bannerSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Banners are read on every storefront page load and always sorted the same way.
+bannerSchema.index({ isActive: 1, position: 1, order: 1, createdAt: -1 });
+
+// Replacing or deleting a banner image drops the old file from Cloudinary.
+bannerSchema.plugin(cloudinaryCleanupPlugin);
 
 module.exports = mongoose.model('Banner', bannerSchema);

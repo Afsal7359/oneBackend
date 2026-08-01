@@ -1,13 +1,24 @@
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
+const compression = require('compression');
 require('dotenv').config();
 
 const connectDB = require('./config/db');
+const { serverTiming } = require('./utils/responseCache');
 const { notFound, errorHandler } = require('./middleware/error');
 
 const app = express();
 connectDB();
+
+// Product listings are mostly repeated JSON keys and gzip to a fraction of
+// their size. Less to transfer is less time on the wire for the shopper.
+app.use(compression());
+
+// Reports how long the handler actually took, so a slow endpoint can be told
+// apart from a slow network in the browser's dev tools. Cached responses also
+// carry `X-Cache: HIT`.
+app.use(serverTiming());
 
 app.use(cors({ origin: (process.env.CLIENT_URL || '*').split(','), credentials: true }));
 // Keep the untouched bytes around: the Razorpay webhook signature is an HMAC

@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import slugify from 'slugify';
+import { cloudinaryCleanupPlugin } from '../utils/cloudinaryCleanup.js';
 
 const blogSchema = new mongoose.Schema(
   {
@@ -26,5 +27,11 @@ blogSchema.pre('validate', function (next) {
   if (this.isPublished && !this.publishedAt) this.publishedAt = new Date();
   next();
 });
+
+// The blog list is always "published, newest first".
+blogSchema.index({ isPublished: 1, publishedAt: -1 });
+blogSchema.index({ isPublished: 1, createdAt: -1 });
+
+blogSchema.plugin(cloudinaryCleanupPlugin);
 
 export default mongoose.model('Blog', blogSchema);

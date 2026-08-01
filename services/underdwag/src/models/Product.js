@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import slugify from 'slugify';
 import { generateUniqueBarcode, isValidEan13 } from '../utils/barcode.js';
+import { cloudinaryCleanupPlugin } from '../utils/cloudinaryCleanup.js';
 
 const variantSchema = new mongoose.Schema(
   {
@@ -99,5 +100,15 @@ productSchema.virtual('inStock').get(function () {
 });
 
 productSchema.set('toJSON', { virtuals: true });
+
+// Removing a photo from a product removes it from Cloudinary too, unless an
+// order (which snapshots the image at checkout) or the site settings still
+// point at it.
+productSchema.plugin(cloudinaryCleanupPlugin, {
+  protectedBy: [
+    { model: () => mongoose.model('Order') },
+    { model: () => mongoose.model('SiteSettings'), scanAll: true },
+  ],
+});
 
 export default mongoose.model('Product', productSchema);
