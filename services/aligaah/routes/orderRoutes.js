@@ -4,6 +4,8 @@ const { protect, optionalAuth, admin } = require('../middleware/auth');
 
 router.post('/', optionalAuth, c.createOrder);
 router.post('/razorpay', optionalAuth, c.createRazorpayOrder);
+router.post('/razorpay/failed', c.markPaymentFailed);
+router.post('/razorpay/webhook', c.razorpayWebhook); // Razorpay -> us; signed, no auth
 router.post('/verify', optionalAuth, c.verifyPayment);
 router.get('/mine', protect, c.getMyOrders);
 router.get('/', protect, admin, c.getOrders);

@@ -1,12 +1,12 @@
 /**
  * PM2 process config for oneBackend.
  *
- *   pm2 start ecosystem.config.cjs      # start gateway + all 4 services
+ *   pm2 start ecosystem.config.cjs      # start gateway + all 5 services
  *   pm2 save && pm2 startup             # survive server reboots
  *   pm2 logs / pm2 restart all / pm2 status
  *
  * In production only the GATEWAY port needs to be reachable from outside
- * (nginx proxies 443 -> 4000). The four service ports stay on localhost.
+ * (nginx proxies 443 -> 4000). The five service ports stay on localhost.
  */
 
 const path = require('path');
@@ -54,6 +54,12 @@ module.exports = {
       ...common,
       name: 'underdwag',
       cwd: svc('underdwag'),
+      script: 'src/server.js',
+    },
+    {
+      ...common,
+      name: 'isosmack',
+      cwd: svc('isosmack'),
       script: 'src/server.js',
     },
   ],

@@ -1,51 +1,52 @@
 # oneBackend
 
-One backend project that runs **all 4 backends together on a single public port** through an
+One backend project that runs **all 5 backends together on a single public port** through an
 API gateway. Each backend keeps its **own database**, its own code, and its own routes — it is
 simply reached under a unique path prefix.
 
 ```
-                         ┌─────────────────────────────────────────────┐
-                         │        oneBackend gateway  :4000            │  ← the ONE public port
-   frontend ───────────▶│  (Express + http-proxy-middleware)          │
-                         └───────┬───────┬───────┬───────┬─────────────┘
-                                 │       │       │       │
-        /aligaah/api/*   ────────┘       │       │       └──────── /underdwag/api/*
-                   ▼                      │       │                        ▼
-          aligaah  :5050          /crunz/api/*  /ezone/api/*        underdwag :5008
-          DB: aligaah                 ▼           ▼                 DB: clothing
-                                crunz :5006   ezone :5003
-                                DB: crunz     DB: etrade
+                    ┌──────────────────────────────────────────────────┐
+                    │           oneBackend gateway  :4000              │  ← the ONE public port
+   frontend ──────▶│      (Express + http-proxy-middleware)           │
+                    └──┬──────┬──────────┬──────────┬──────────┬───────┘
+                       │      │          │          │          │
+              /aligaah │      │ /crunz   │ /ezone   │/underdwag│ /isosmack
+                       ▼      ▼          ▼          ▼          ▼
+                  aligaah  crunz      ezone     underdwag   isosmack
+                   :9001   :9002      :9003       :9004      :9005
+                DB:aligaah DB:crunz  DB:etrade  DB:clothing DB:isosmack
 ```
 
 ## What is where
 
-| Service   | Public base URL (via gateway)     | Internal port | Module system | Database  | Payment  |
-|-----------|-----------------------------------|---------------|---------------|-----------|----------|
-| aligaah   | `http://localhost:4000/aligaah/api`   | 5050      | CommonJS      | `aligaah` | Razorpay |
-| crunz     | `http://localhost:4000/crunz/api`     | 5006      | CommonJS      | `crunz`   | Stripe   |
-| ezone     | `http://localhost:4000/ezone/api`     | 5003      | ES Modules    | `etrade`  | Razorpay |
-| underdwag | `http://localhost:4000/underdwag/api` | 5008      | ES Modules    | `clothing`| Stripe   |
+| Service   | Public base URL (via gateway)     | Internal port | Module system | Database   | Payment  |
+|-----------|-----------------------------------|---------------|---------------|------------|----------|
+| aligaah   | `http://localhost:4000/aligaah/api`   | 9001      | CommonJS      | `aligaah`  | Razorpay |
+| crunz     | `http://localhost:4000/crunz/api`     | 9002      | CommonJS      | `crunz`    | Stripe   |
+| ezone     | `http://localhost:4000/ezone/api`     | 9003      | ES Modules    | `etrade`   | Razorpay |
+| underdwag | `http://localhost:4000/underdwag/api` | 9004      | ES Modules    | `clothing` | Stripe   |
+| isosmack  | `http://localhost:4000/isosmack/api`  | 9005      | ES Modules    | `isosmack` | Razorpay |
 
 > **Note:** the classic port `5000` is used by macOS AirPlay Receiver (ControlCenter), so the
 > gateway runs on **4000**. Change `GATEWAY_PORT` in `.env` to move it.
 
 Each service still receives the exact `/api/...` paths it was written for — the gateway strips
-the `/aligaah`, `/crunz`, `/ezone`, `/underdwag` prefix before forwarding. **No service code was
-changed.** Static uploads are reachable the same way, e.g. `http://localhost:4000/crunz/uploads/...`.
+the `/aligaah`, `/crunz`, `/ezone`, `/underdwag`, `/isosmack` prefix before forwarding. **No service
+code was changed.** Static uploads are reachable the same way, e.g. `http://localhost:4000/crunz/uploads/...`.
 
 ## Folder layout
 
 ```
 oneBackend/
 ├── gateway.js          # single public port, proxies each prefix to its service
-├── package.json        # `npm start` runs the gateway + all 4 services together
+├── package.json        # `npm start` runs the gateway + all 5 services together
 ├── .env                # GATEWAY_PORT + per-service targets
 └── services/
     ├── aligaah/        # moved from  "Aligaah designs ecom/aligaah/backend"
     ├── crunz/          # moved from  "crunz_site 3/crunz-backend"
     ├── ezone/          # moved from  "ezoneshoppi/backend"
-    └── underdwag/      # moved from  "underdwag/backend"
+    ├── underdwag/      # moved from  "underdwag/backend"
+    └── isosmack/       # moved from  "isosmack website/backend"
 ```
 
 The original project folders now contain **frontend only**. Each frontend's
@@ -56,7 +57,7 @@ The original project folders now contain **frontend only**. Each frontend's
 ```bash
 cd oneBackend
 npm install        # first time only — installs the gateway's own deps
-npm start          # starts the gateway + all 4 services (each with its own .env)
+npm start          # starts the gateway + all 5 services (each with its own .env)
 ```
 
 `npm run dev` does the same with hot-reload (nodemon).
@@ -67,7 +68,7 @@ Cloudinary, Stripe/Razorpay keys, SMTP are unchanged from before.
 ### Run / debug a single service
 
 ```bash
-npm run start:aligaah        # or start:crunz / start:ezone / start:underdwag
+npm run start:aligaah        # or start:crunz / start:ezone / start:underdwag / start:isosmack
 npm run gateway              # just the gateway
 ```
 
@@ -81,6 +82,7 @@ curl http://localhost:4000/                       # gateway index (lists all rou
 curl http://localhost:4000/aligaah/api/health
 curl http://localhost:4000/crunz/api/health
 curl http://localhost:4000/underdwag/api/health
+curl http://localhost:4000/isosmack/api/health
 curl http://localhost:4000/ezone/                 # ezone has no /health; root returns ok
 ```
 

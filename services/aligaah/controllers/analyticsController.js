@@ -41,13 +41,19 @@ const overview = asyncHandler(async (req, res) => {
     Visit.countDocuments({ type: 'page', day: { $gte: sinceDay } }),
     Visit.countDocuments({ type: 'product', day: { $gte: sinceDay } }),
     Product.countDocuments({}),
-    Order.countDocuments({}),
+    // Abandoned Razorpay attempts are parked as unpaid orders — don't count them.
+    Order.countDocuments({ $or: [{ paymentMethod: { $ne: 'Razorpay' } }, { isPaid: true }] }),
     User.countDocuments({ role: 'user' }),
     Visit.distinct('sessionId', { day: { $gte: sinceDay }, sessionId: { $ne: '' } }),
   ]);
 
   const revenueAgg = await Order.aggregate([
-    { $match: { status: { $ne: 'cancelled' } } },
+    {
+      $match: {
+        status: { $ne: 'cancelled' },
+        $or: [{ paymentMethod: { $ne: 'Razorpay' } }, { isPaid: true }],
+      },
+    },
     { $group: { _id: null, total: { $sum: '$grandTotal' } } },
   ]);
 

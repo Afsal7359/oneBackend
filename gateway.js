@@ -1,14 +1,15 @@
 /**
  * oneBackend — API Gateway
  * -------------------------------------------------------------
- * A single PUBLIC port that fronts all 4 backends. Each backend
+ * A single PUBLIC port that fronts all 5 backends. Each backend
  * keeps running as its own service (own DB, own module system,
  * own internal port) and is reachable under a unique path prefix:
  *
- *   http://localhost:5000/aligaah/api/...    ->  aligaah   service (:5050)
- *   http://localhost:5000/crunz/api/...      ->  crunz     service (:5006)
- *   http://localhost:5000/ezone/api/...      ->  ezone     service (:5003)
- *   http://localhost:5000/underdwag/api/...  ->  underdwag service (:5008)
+ *   http://localhost:4000/aligaah/api/...    ->  aligaah   service (:9001)
+ *   http://localhost:4000/crunz/api/...      ->  crunz     service (:9002)
+ *   http://localhost:4000/ezone/api/...      ->  ezone     service (:9003)
+ *   http://localhost:4000/underdwag/api/...  ->  underdwag service (:9004)
+ *   http://localhost:4000/isosmack/api/...   ->  isosmack  service (:9005)
  *
  * The prefix is stripped before the request reaches the service,
  * so every service still receives the exact /api/... paths it was
@@ -29,6 +30,7 @@ const services = [
   { name: 'crunz',     prefix: '/crunz',     target: process.env.CRUNZ_TARGET     || 'http://localhost:9002' },
   { name: 'ezone',     prefix: '/ezone',     target: process.env.EZONE_TARGET     || 'http://localhost:9003' },
   { name: 'underdwag', prefix: '/underdwag', target: process.env.UNDERDWAG_TARGET || 'http://localhost:9004' },
+  { name: 'isosmack',  prefix: '/isosmack',  target: process.env.ISOSMACK_TARGET  || 'http://localhost:9005' },
 ];
 
 // --- Gateway's own routes (must be declared BEFORE the proxies) ---

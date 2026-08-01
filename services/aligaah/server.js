@@ -10,7 +10,12 @@ const app = express();
 connectDB();
 
 app.use(cors({ origin: (process.env.CLIENT_URL || '*').split(','), credentials: true }));
-app.use(express.json({ limit: '25mb' }));
+// Keep the untouched bytes around: the Razorpay webhook signature is an HMAC
+// over the exact raw body, so re-serialising the parsed JSON would break it.
+app.use(express.json({
+  limit: '25mb',
+  verify: (req, _res, buf) => { req.rawBody = buf; },
+}));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 if (process.env.NODE_ENV !== 'production') app.use(morgan('dev'));
 

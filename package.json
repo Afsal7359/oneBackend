@@ -2,16 +2,17 @@
   "name": "onebackend",
   "version": "1.0.0",
   "private": true,
-  "description": "Single gateway that fronts 4 backends (aligaah, crunz, ezone, underdwag) on one port. Each service keeps its own database and routes under a unique path prefix.",
+  "description": "Single gateway that fronts 5 backends (aligaah, crunz, ezone, underdwag, isosmack) on one port. Each service keeps its own database and routes under a unique path prefix.",
   "main": "gateway.js",
   "scripts": {
-    "start": "concurrently -k -n gateway,aligaah,crunz,ezone,underdwag -c cyan,green,yellow,magenta,blue \"node gateway.js\" \"cd services/aligaah && npm start\" \"cd services/crunz && npm start\" \"cd services/ezone && npm start\" \"cd services/underdwag && npm start\"",
-    "dev": "concurrently -k -n gateway,aligaah,crunz,ezone,underdwag -c cyan,green,yellow,magenta,blue \"nodemon gateway.js\" \"cd services/aligaah && npm run dev\" \"cd services/crunz && npm run dev\" \"cd services/ezone && npm run dev\" \"cd services/underdwag && npm run dev\"",
+    "start": "concurrently -k -n gateway,aligaah,crunz,ezone,underdwag,isosmack -c cyan,green,yellow,magenta,blue,red \"node gateway.js\" \"cd services/aligaah && npm start\" \"cd services/crunz && npm start\" \"cd services/ezone && npm start\" \"cd services/underdwag && npm start\" \"cd services/isosmack && npm start\"",
+    "dev": "concurrently -k -n gateway,aligaah,crunz,ezone,underdwag,isosmack -c cyan,green,yellow,magenta,blue,red \"nodemon gateway.js\" \"cd services/aligaah && npm run dev\" \"cd services/crunz && npm run dev\" \"cd services/ezone && npm run dev\" \"cd services/underdwag && npm run dev\" \"cd services/isosmack && npm run dev\"",
     "gateway": "node gateway.js",
     "start:aligaah": "cd services/aligaah && npm start",
     "start:crunz": "cd services/crunz && npm start",
     "start:ezone": "cd services/ezone && npm start",
-    "start:underdwag": "cd services/underdwag && npm start"
+    "start:underdwag": "cd services/underdwag && npm start",
+    "start:isosmack": "cd services/isosmack && npm start"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

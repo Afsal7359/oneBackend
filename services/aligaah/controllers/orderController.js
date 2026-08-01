@@ -4,6 +4,7 @@ const Order = require('../models/Order');
 const Product = require('../models/Product');
 const Coupon = require('../models/Coupon');
 const User = require('../models/User');
+const Settings = require('../models/Settings');
 const { instance: razorpay, isConfigured: rzpConfigured } = require('../config/razorpay');
 
 // Attach the order to a user: the logged-in user if present, otherwise
@@ -51,13 +52,19 @@ async function computeOrder(body) {
   return { dbItems, itemsTotal, couponData, couponDoc, grandTotal, shippingFee: Number(shippingFee) };
 }
 
-// Persist the order + side effects (stock/sales, coupon usage).
-async function persistOrder(body, user, { paymentMethod = 'COD', isPaid = false, payment = {} } = {}) {
-  const c = await computeOrder(body);
-  if (!c.dbItems.length) { const e = new Error('No items in order'); e.status = 400; throw e; }
-  for (const it of c.dbItems) { await Product.updateOne({ _id: it.product }, { $inc: { sales: it.qty } }); }
-  if (c.couponDoc) { c.couponDoc.usedCount += 1; await c.couponDoc.save(); }
-  return Order.create({
+// Stock/sales counters and coupon usage — applied once, when an order becomes
+// real (COD placed, or an online payment actually confirmed). Never at the
+// moment a gateway order is opened, because most of those are abandoned.
+async function applySideEffects(order, couponCode) {
+  for (const it of order.items) {
+    await Product.updateOne({ _id: it.product }, { $inc: { sales: it.qty } });
+  }
+  const code = couponCode || order.coupon?.code;
+  if (code) await Coupon.updateOne({ code }, { $inc: { usedCount: 1 } });
+}
+
+function orderDocFrom(c, body, user, extra = {}) {
+  return {
     user: user?._id,
     items: c.dbItems,
     shipping: body.shipping || {},
@@ -65,67 +72,183 @@ async function persistOrder(body, user, { paymentMethod = 'COD', isPaid = false,
     coupon: c.couponData,
     shippingFee: c.shippingFee,
     grandTotal: c.grandTotal,
-    paymentMethod,
-    isPaid,
-    payment,
-  });
+    ...extra,
+  };
 }
 
 // @route POST /api/orders — Cash on Delivery / direct
 const createOrder = asyncHandler(async (req, res) => {
+  const settings = await Settings.getSingleton();
+  if (settings.codEnabled === false) {
+    res.status(400);
+    throw new Error('Cash on Delivery is currently unavailable');
+  }
   const user = await resolveOrderUser(req);
-  const order = await persistOrder(req.body, user, {
-    paymentMethod: req.body.paymentMethod || 'COD',
+  const c = await computeOrder(req.body);
+  if (!c.dbItems.length) { res.status(400); throw new Error('No items in order'); }
+
+  const order = await Order.create(orderDocFrom(c, req.body, user, {
+    paymentMethod: 'COD',
     isPaid: false,
-  });
+  }));
+  await applySideEffects(order, c.couponDoc?.code);
   res.status(201).json(order);
 });
 
-// @route POST /api/orders/razorpay — create a Razorpay order (returns id + key)
-// Falls back to { disabled:true } if keys aren't configured, so the client uses COD.
+// @route POST /api/orders/razorpay — open a Razorpay order and park a pending
+// local order against it. Totals are frozen here and never recomputed from the
+// client again, so the cart can't be swapped between paying and verifying.
 const createRazorpayOrder = asyncHandler(async (req, res) => {
-  if (!rzpConfigured()) return res.json({ disabled: true });
+  const settings = await Settings.getSingleton();
+  if (settings.onlinePaymentEnabled === false) {
+    res.status(400);
+    throw new Error('Online payment is currently unavailable');
+  }
+  if (!rzpConfigured()) {
+    res.status(503);
+    throw new Error('Online payment is not configured on the server');
+  }
+
   const c = await computeOrder(req.body);
   if (!c.dbItems.length) { res.status(400); throw new Error('No items in order'); }
   const amount = Math.round(c.grandTotal * 100); // paise
-  if (amount < 100) { res.status(400); throw new Error('Order amount too low'); }
+  if (amount < 100) { res.status(400); throw new Error('Order amount must be at least ₹1'); }
+
+  const user = await resolveOrderUser(req);
   const rzpOrder = await razorpay.orders.create({
-    amount, currency: 'INR', receipt: 'rcpt_' + Date.now(),
+    amount,
+    currency: 'INR',
+    receipt: 'rcpt_' + Date.now(),
+    notes: {
+      customer: req.body?.shipping?.name || '',
+      phone: req.body?.shipping?.phone || '',
+    },
   });
-  res.json({ orderId: rzpOrder.id, amount, currency: 'INR', keyId: process.env.RAZORPAY_KEY_ID });
+
+  const order = await Order.create(orderDocFrom(c, req.body, user, {
+    paymentMethod: 'Razorpay',
+    isPaid: false,
+    status: 'pending',
+    payment: { provider: 'razorpay', orderId: rzpOrder.id, status: 'created', amount },
+  }));
+
+  res.json({
+    orderId: rzpOrder.id,
+    orderRef: order._id,
+    amount,
+    currency: 'INR',
+    keyId: process.env.RAZORPAY_KEY_ID,
+  });
 });
 
-// @route POST /api/orders/verify — verify Razorpay signature, then create the order
+// Flip a parked order to paid exactly once. Returns the order, or null if the
+// gateway order id is unknown to us.
+async function markPaid(rzpOrderId, { paymentId, signature = '', method = '' }) {
+  const order = await Order.findOne({ 'payment.orderId': rzpOrderId });
+  if (!order) return null;
+  if (order.isPaid) return order; // idempotent: verify + webhook can both land
+
+  order.isPaid = true;
+  order.paidAt = new Date();
+  order.status = 'confirmed';
+  order.payment.status = 'paid';
+  order.payment.paymentId = paymentId || order.payment.paymentId;
+  if (signature) order.payment.signature = signature;
+  if (method) order.payment.method = method;
+  order.payment.error = '';
+  await order.save();
+  await applySideEffects(order);
+  return order;
+}
+
+// @route POST /api/orders/verify — browser-side confirmation after checkout
 const verifyPayment = asyncHandler(async (req, res) => {
-  if (!rzpConfigured()) { res.status(400); throw new Error('Payments not configured'); }
+  if (!rzpConfigured()) { res.status(503); throw new Error('Online payment is not configured on the server'); }
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
   if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
     res.status(400); throw new Error('Missing payment fields');
   }
+
   const expected = crypto
     .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
     .update(`${razorpay_order_id}|${razorpay_payment_id}`)
     .digest('hex');
-  if (expected !== razorpay_signature) { res.status(400); throw new Error('Payment verification failed'); }
+  const a = Buffer.from(expected, 'utf8');
+  const b = Buffer.from(String(razorpay_signature), 'utf8');
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    res.status(400); throw new Error('Payment verification failed');
+  }
 
-  const user = await resolveOrderUser(req);
-  const order = await persistOrder(req.body, user, {
-    paymentMethod: 'Razorpay',
-    isPaid: true,
-    payment: { provider: 'razorpay', orderId: razorpay_order_id, paymentId: razorpay_payment_id, signature: razorpay_signature },
+  const order = await markPaid(razorpay_order_id, {
+    paymentId: razorpay_payment_id,
+    signature: razorpay_signature,
   });
+  if (!order) { res.status(404); throw new Error('Order not found for this payment'); }
   res.status(201).json(order);
 });
 
+// @route POST /api/orders/razorpay/failed — checkout reported a failed attempt.
+// Only records the reason; the order stays pending so a retry can still pay it.
+const markPaymentFailed = asyncHandler(async (req, res) => {
+  const { razorpay_order_id, reason = '' } = req.body;
+  if (!razorpay_order_id) { res.status(400); throw new Error('Missing order id'); }
+  const order = await Order.findOne({ 'payment.orderId': razorpay_order_id });
+  if (!order || order.isPaid) return res.json({ ok: true });
+  order.payment.status = 'failed';
+  order.payment.error = String(reason).slice(0, 300);
+  await order.save();
+  res.json({ ok: true });
+});
+
+// @route POST /api/orders/razorpay/webhook — server-to-server safety net.
+// If the customer's browser dies after paying, this still completes the order.
+// Requires RAZORPAY_WEBHOOK_SECRET and the raw body captured in server.js.
+const razorpayWebhook = asyncHandler(async (req, res) => {
+  const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+  if (!secret) { res.status(503); throw new Error('Webhook not configured'); }
+
+  const signature = req.headers['x-razorpay-signature'] || '';
+  const raw = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
+  const expected = crypto.createHmac('sha256', secret).update(raw).digest('hex');
+  const a = Buffer.from(expected, 'utf8');
+  const b = Buffer.from(String(signature), 'utf8');
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    res.status(400); throw new Error('Invalid webhook signature');
+  }
+
+  const event = req.body?.event;
+  const payment = req.body?.payload?.payment?.entity;
+  if (payment?.order_id) {
+    if (event === 'payment.captured') {
+      await markPaid(payment.order_id, { paymentId: payment.id, method: payment.method });
+    } else if (event === 'payment.failed') {
+      const order = await Order.findOne({ 'payment.orderId': payment.order_id });
+      if (order && !order.isPaid) {
+        order.payment.status = 'failed';
+        order.payment.error = payment.error_description || 'Payment failed';
+        await order.save();
+      }
+    }
+  }
+  res.json({ ok: true }); // always 200 so Razorpay stops retrying
+});
+
 // @route GET /api/orders (admin)
+// Abandoned gateway orders are hidden by default — pass ?includeUnpaid=1 to see them.
 const getOrders = asyncHandler(async (req, res) => {
-  const orders = await Order.find().populate('user', 'name email').sort({ createdAt: -1 });
+  const filter = req.query.includeUnpaid
+    ? {}
+    : { $or: [{ paymentMethod: { $ne: 'Razorpay' } }, { isPaid: true }] };
+  const orders = await Order.find(filter).populate('user', 'name email').sort({ createdAt: -1 });
   res.json(orders);
 });
 
-// @route GET /api/orders/mine (user)
+// @route GET /api/orders/mine (user) — never show unpaid online attempts
 const getMyOrders = asyncHandler(async (req, res) => {
-  const orders = await Order.find({ user: req.user._id }).sort({ createdAt: -1 });
+  const orders = await Order.find({
+    user: req.user._id,
+    $or: [{ paymentMethod: { $ne: 'Razorpay' } }, { isPaid: true }],
+  }).sort({ createdAt: -1 });
   res.json(orders);
 });
 
@@ -141,6 +264,6 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
-  createOrder, createRazorpayOrder, verifyPayment,
+  createOrder, createRazorpayOrder, verifyPayment, markPaymentFailed, razorpayWebhook,
   getOrders, getMyOrders, updateOrderStatus,
 };
