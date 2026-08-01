@@ -27,6 +27,51 @@ async function resolveOrderUser(req) {
   return user;
 }
 
+// Shipping details are re-checked here, not just in the browser — a bad phone or
+// pincode means an undeliverable order, and the client can be bypassed.
+const PHONE_RE = /^[6-9]\d{9}$/;
+const PIN_RE = /^[1-9]\d{5}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+function validateShipping(shipping = {}) {
+  const errors = {};
+  const name = String(shipping.name || '').trim();
+  const phone = String(shipping.phone || '').replace(/[\s\-()]/g, '').replace(/^(\+91|91|0)/, '');
+  const email = String(shipping.email || '').trim();
+  const line1 = String(shipping.line1 || '').trim();
+  const city = String(shipping.city || '').trim();
+  const state = String(shipping.state || '').trim();
+  const pincode = String(shipping.pincode || '').trim();
+
+  if (name.length < 2) errors.name = 'Please enter your full name';
+  if (!PHONE_RE.test(phone)) errors.phone = 'Enter a valid 10-digit mobile number';
+  if (!EMAIL_RE.test(email)) errors.email = 'Enter a valid email address';
+  if (line1.length < 6) errors.line1 = 'Please enter a complete address';
+  if (city.length < 2) errors.city = 'Please enter your city';
+  if (state.length < 2) errors.state = 'Please enter your state';
+  if (!PIN_RE.test(pincode)) errors.pincode = 'Enter a valid 6-digit pincode';
+
+  return {
+    errors,
+    ok: Object.keys(errors).length === 0,
+    // normalised copy — this is what gets stored
+    clean: { ...shipping, name, phone, email: email.toLowerCase(), line1, city, state, pincode },
+  };
+}
+
+// Throws a 400 carrying per-field messages the checkout form renders inline.
+function assertShipping(req, res) {
+  const { ok, errors, clean } = validateShipping(req.body?.shipping);
+  if (!ok) {
+    res.status(400);
+    const e = new Error(Object.values(errors)[0]);
+    e.fields = errors;
+    throw e;
+  }
+  req.body.shipping = clean;
+  return clean;
+}
+
 // Rebuild items/totals from the DB so prices/discounts are always trusted.
 async function computeOrder(body) {
   const { items = [], couponCode, shippingFee = 0 } = body;
@@ -83,6 +128,7 @@ const createOrder = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('Cash on Delivery is currently unavailable');
   }
+  assertShipping(req, res);
   const user = await resolveOrderUser(req);
   const c = await computeOrder(req.body);
   if (!c.dbItems.length) { res.status(400); throw new Error('No items in order'); }
@@ -109,21 +155,36 @@ const createRazorpayOrder = asyncHandler(async (req, res) => {
     throw new Error('Online payment is not configured on the server');
   }
 
+  assertShipping(req, res);
   const c = await computeOrder(req.body);
   if (!c.dbItems.length) { res.status(400); throw new Error('No items in order'); }
   const amount = Math.round(c.grandTotal * 100); // paise
   if (amount < 100) { res.status(400); throw new Error('Order amount must be at least ₹1'); }
 
   const user = await resolveOrderUser(req);
-  const rzpOrder = await razorpay.orders.create({
-    amount,
-    currency: 'INR',
-    receipt: 'rcpt_' + Date.now(),
-    notes: {
-      customer: req.body?.shipping?.name || '',
-      phone: req.body?.shipping?.phone || '',
-    },
-  });
+  let rzpOrder;
+  try {
+    rzpOrder = await razorpay.orders.create({
+      amount,
+      currency: 'INR',
+      receipt: 'rcpt_' + Date.now(),
+      notes: {
+        customer: req.body?.shipping?.name || '',
+        phone: req.body?.shipping?.phone || '',
+      },
+    });
+  } catch (err) {
+    // Razorpay rejects with { statusCode, error:{ code, description } } and no
+    // .message, so log the real reason here and hand the customer a plain one.
+    const detail = err?.error?.description || err?.message || 'unknown error';
+    console.error(`[razorpay] orders.create failed (${err?.statusCode || '?'}): ${detail}`);
+    res.status(502);
+    throw new Error(
+      err?.statusCode === 401
+        ? 'Online payment is temporarily unavailable. Please use Cash on Delivery or try again later.'
+        : `Payment gateway error: ${detail}`
+    );
+  }
 
   const order = await Order.create(orderDocFrom(c, req.body, user, {
     paymentMethod: 'Razorpay',

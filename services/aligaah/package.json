@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "seed": "node seed/seed.js"
+    "seed": "node seed/seed.js",
+    "check:razorpay": "node scripts/check-razorpay.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

@@ -5,12 +5,17 @@ const notFound = (req, res, next) => {
 
 const errorHandler = (err, req, res, next) => {
   let status = res.statusCode === 200 ? 500 : res.statusCode;
-  let message = err.message;
+  let message = err && err.message;
 
   // Mongoose bad ObjectId
   if (err.name === 'CastError' && err.kind === 'ObjectId') {
     status = 404;
     message = 'Resource not found';
+  }
+  // Mongoose validation
+  if (err.name === 'ValidationError' && err.errors) {
+    status = 400;
+    message = Object.values(err.errors).map((e) => e.message).join(', ');
   }
   // Duplicate key
   if (err.code === 11000) {
@@ -18,10 +23,26 @@ const errorHandler = (err, req, res, next) => {
     const field = Object.keys(err.keyValue || {})[0] || 'field';
     message = `Duplicate value for ${field}`;
   }
+  // Third-party SDKs (Razorpay, Cloudinary) reject with plain objects that have
+  // no .message — without this the client received `{}` and showed "Request failed".
+  if (!message) {
+    message =
+      err?.error?.description ||
+      err?.error?.message ||
+      (typeof err === 'string' ? err : '') ||
+      'Something went wrong on the server';
+    if (err?.statusCode >= 400 && err?.statusCode < 500) status = 502; // upstream refused us, not the customer's fault
+  }
+
+  // Always leave a trace for a 5xx, whatever shape the failure arrived in.
+  if (status >= 500) {
+    console.error(`[${req.method} ${req.originalUrl}] ${status}`, err?.stack || err);
+  }
 
   res.status(status).json({
     message,
-    stack: process.env.NODE_ENV === 'production' ? undefined : err.stack,
+    fields: err?.fields,   // per-field messages for form-level validation
+    stack: process.env.NODE_ENV === 'production' ? undefined : err?.stack,
   });
 };
 
