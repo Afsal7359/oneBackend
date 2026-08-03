@@ -44,6 +44,7 @@ app.use('/api/orders', require('./routes/orderRoutes'));
 app.use('/api/upload', require('./routes/uploadRoutes'));
 app.use('/api/analytics', require('./routes/analyticsRoutes'));
 app.use('/api/settings', require('./routes/settingsRoutes'));
+app.use('/api/enquiries', require('./routes/enquiryRoutes'));
 
 app.use(notFound);
 app.use(errorHandler);

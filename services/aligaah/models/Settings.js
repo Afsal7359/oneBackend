@@ -19,12 +19,39 @@ const settingsSchema = new mongoose.Schema(
       type: String,
       default: 'Handcrafted ethnic wear and modern classics for the woman who dresses with intention.',
     },
+    // Only the four channels the brand actually posts on. A blank value hides
+    // the icon rather than rendering a dead link, so the admin can drop one
+    // channel without leaving a '#' in the top bar.
     social: {
-      facebook: { type: String, default: '#' },
-      x: { type: String, default: '#' },
-      pinterest: { type: String, default: '#' },
-      linkedin: { type: String, default: '#' },
-      telegram: { type: String, default: '#' },
+      facebook: { type: String, default: '' },
+      instagram: { type: String, default: '' },
+      youtube: { type: String, default: '' },
+      whatsapp: { type: String, default: '' },
+    },
+
+    // Shown on the contact page and used for the "get directions" link.
+    contact: {
+      phone: { type: String, default: '' },
+      whatsapp: { type: String, default: '' },   // digits only, e.g. 919876543210
+      email: { type: String, default: '' },
+      addressLine1: { type: String, default: '' },
+      landmark: { type: String, default: '' },
+      district: { type: String, default: '' },
+      city: { type: String, default: '' },
+      state: { type: String, default: '' },
+      pincode: { type: String, default: '' },
+      mapUrl: { type: String, default: '' },     // Google Maps place/directions link
+      hours: { type: String, default: '' },      // free text, e.g. "Mon–Sat, 10am–7pm"
+    },
+
+    // Drives the return policy page. The window is a number rather than prose
+    // so the page and any future order-side check read the same source.
+    returns: {
+      windowDays: { type: Number, default: 7 },
+      // A parcel-opening video is what makes a damage claim verifiable, so the
+      // policy hinges on it. Kept as a flag in case the brand ever relaxes it.
+      requireOpeningVideo: { type: Boolean, default: true },
+      extraNote: { type: String, default: '' },  // optional admin addition
     },
     shipping: {
       freeAbove: { type: Number, default: 0 },
