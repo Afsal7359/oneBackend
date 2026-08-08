@@ -23,6 +23,23 @@ const productSchema = new mongoose.Schema(
     images: [imageSchema],
     stock: { type: Number, default: 10 },
 
+    // Variant choices. Both are opt-in per product: a stole has no size and a
+    // single-colourway saree has no colour, and the storefront renders a
+    // chooser only for the arrays that are non-empty. An empty array therefore
+    // means "this product has no such choice", not "choices unknown".
+    sizes: { type: [String], default: [] },              // ['S','M','L']
+    colors: {
+      type: [new mongoose.Schema(
+        { name: { type: String, required: true, trim: true }, hex: { type: String, default: '#000000' } },
+        { _id: false }
+      )],
+      default: [],
+    },
+
+    // Hand-picked "you may also like". Empty falls back to same-category
+    // products at render time, so a product is never left with a bare page.
+    relatedProducts: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Product' }],
+
     isHot: { type: Boolean, default: false },
     isSoldOut: { type: Boolean, default: false },
     isFeatured: { type: Boolean, default: false },

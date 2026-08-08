@@ -8,6 +8,10 @@ const orderItemSchema = new mongoose.Schema(
     image: String,
     price: Number,
     qty: Number,
+    // Snapshot of what was chosen, so the packing slip still reads correctly
+    // after the product's size or colour list is later edited.
+    size: { type: String, default: '' },
+    color: { type: String, default: '' },
   },
   { _id: false }
 );

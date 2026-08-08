@@ -26,12 +26,30 @@ router.get('/upload-signature', protect, (req, res) => {
 });
 
 // Legacy upload endpoint (kept for backward compat)
-router.post('/upload', protect, upload.array('files', 10), (req, res) => {
-  if (!req.files || req.files.length === 0) {
-    return res.status(400).json({ message: 'No files uploaded' });
+// The multer callback is wrapped so a rejected file reports WHY (size / type)
+// instead of falling through to the generic 500 handler.
+router.post(
+  '/upload',
+  protect,
+  (req, res, next) => {
+    upload.array('files', 10)(req, res, (err) => {
+      if (!err) return next();
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ message: 'Image is larger than 5 MB after compression. Please use a smaller file.' });
+      }
+      if (err.code === 'LIMIT_FILE_COUNT') {
+        return res.status(400).json({ message: 'Too many files — 10 per upload.' });
+      }
+      return res.status(400).json({ message: err.message || 'Upload failed' });
+    });
+  },
+  (req, res) => {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ message: 'No files uploaded' });
+    }
+    const urls = req.files.map((f) => f.path);
+    res.json({ urls });
   }
-  const urls = req.files.map((f) => f.path);
-  res.json({ urls });
-});
+);
 
 export default router;

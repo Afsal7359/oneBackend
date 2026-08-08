@@ -11,9 +11,20 @@ const getProducts = asyncHandler(async (req, res) => {
   if (!all) filter.isActive = true;
 
   if (category) {
-    const cat = await Category.findOne({ slug: category });
-    if (cat) filter.category = cat._id;
-    else return res.json({ products: [], total: 0, page: 1, pages: 0 });
+    // The storefront knows categories by slug; the admin's related-product
+    // picker already holds the id, so accept either rather than making the
+    // admin round-trip for a slug it doesn't need.
+    if (/^[0-9a-fA-F]{24}$/.test(category)) {
+      filter.category = category;
+    } else {
+      const cat = await Category.findOne({ slug: category });
+      if (cat) filter.category = cat._id;
+      else return res.json({ products: [], total: 0, page: 1, pages: 0 });
+    }
+  }
+  // Keeps a product out of its own "related" picker.
+  if (req.query.exclude && /^[0-9a-fA-F]{24}$/.test(req.query.exclude)) {
+    filter._id = { $ne: req.query.exclude };
   }
   if (tag === 'featured') filter.isFeatured = true;
   if (tag === 'best') filter.isBestSeller = true;
@@ -52,8 +63,20 @@ const getProducts = asyncHandler(async (req, res) => {
 const getProduct = asyncHandler(async (req, res) => {
   const key = req.params.id;
   const query = key.match(/^[0-9a-fA-F]{24}$/) ? { _id: key } : { $or: [{ code: key }, { slug: key }] };
-  const product = await Product.findOne(query).populate('category', 'name slug').lean();
+  const product = await Product.findOne(query)
+    .populate('category', 'name slug')
+    // Only the fields a product card renders, so the detail payload doesn't
+    // carry a full second product for each pick.
+    .populate({
+      path: 'relatedProducts',
+      match: { isActive: true },
+      select: 'code title slug price oldPrice discount images categoryName isHot isSoldOut sizes colors',
+    })
+    .lean();
   if (!product) { res.status(404); throw new Error('Product not found'); }
+
+  // `match` leaves nulls where a pick was deleted or deactivated.
+  product.relatedProducts = (product.relatedProducts || []).filter(Boolean);
 
   if (req.query.track !== 'false') {
     // View tracking used to run *inside* the response path: a full document

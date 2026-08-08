@@ -74,7 +74,7 @@ function assertShipping(req, res) {
 }
 
 // Rebuild items/totals from the DB so prices/discounts are always trusted.
-async function computeOrder(body) {
+async function computeOrder(body, res) {
   const { items = [], couponCode, shippingFee = 0 } = body;
   const dbItems = [];
   let itemsTotal = 0;
@@ -82,8 +82,23 @@ async function computeOrder(body) {
     const p = await Product.findOne({ code: it.code });
     if (!p) continue;
     const qty = Math.max(1, Number(it.qty) || 1);
+
+    // The variant is validated the same way the price is: against the product,
+    // never against what the client sent. A size the product does not offer is
+    // dropped rather than trusted, and a product that *does* offer sizes will
+    // not accept a line without one.
+    const sizes = p.sizes || [];
+    const colors = (p.colors || []).map((c) => c.name);
+    const size = sizes.includes(it.size) ? it.size : '';
+    const color = colors.includes(it.color) ? it.color : '';
+    if (sizes.length && !size) { res.status(400); throw new Error(`Please choose a size for ${p.title}`); }
+    if (colors.length && !color) { res.status(400); throw new Error(`Please choose a colour for ${p.title}`); }
+
     itemsTotal += p.price * qty;
-    dbItems.push({ product: p._id, code: p.code, title: p.title, image: p.images?.[0]?.url || '', price: p.price, qty });
+    dbItems.push({
+      product: p._id, code: p.code, title: p.title,
+      image: p.images?.[0]?.url || '', price: p.price, qty, size, color,
+    });
   }
   let couponData = { code: '', discount: 0 };
   let couponDoc = null;
@@ -131,7 +146,7 @@ const createOrder = asyncHandler(async (req, res) => {
   }
   assertShipping(req, res);
   const user = await resolveOrderUser(req);
-  const c = await computeOrder(req.body);
+  const c = await computeOrder(req.body, res);
   if (!c.dbItems.length) { res.status(400); throw new Error('No items in order'); }
 
   const order = await Order.create(orderDocFrom(c, req.body, user, {
@@ -158,7 +173,7 @@ const createRazorpayOrder = asyncHandler(async (req, res) => {
   }
 
   assertShipping(req, res);
-  const c = await computeOrder(req.body);
+  const c = await computeOrder(req.body, res);
   if (!c.dbItems.length) { res.status(400); throw new Error('No items in order'); }
   const amount = Math.round(c.grandTotal * 100); // paise
   if (amount < 100) { res.status(400); throw new Error('Order amount must be at least ₹1'); }
