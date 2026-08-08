@@ -1,16 +1,18 @@
-import jwt from 'jsonwebtoken';
 import { BillingUser } from '../models/billing.js';
+import { sign, verify, SCOPES } from '../config/jwt.js';
 
 /**
  * Billing-app JWT guard.
  * Tokens are stamped with `scope: 'billing'` so a website admin/customer token
  * can never be replayed against the billing API (and vice-versa), even though
- * both are signed with the same JWT_SECRET.
+ * both are signed with the same JWT_SECRET. Scoping is now enforced in
+ * config/jwt.js for all three audiences rather than only this one, and the
+ * iss/aud check there additionally blocks tokens from sibling services.
  */
 export function signBillingToken(user) {
-  return jwt.sign(
-    { id: user._id.toString(), scope: 'billing', role: user.role },
-    process.env.JWT_SECRET,
+  return sign(
+    { id: user._id.toString(), role: user.role },
+    SCOPES.BILLING,
     { expiresIn: process.env.BILLING_JWT_EXPIRES_IN || '30d' }
   );
 }
@@ -18,13 +20,11 @@ export function signBillingToken(user) {
 export async function billingProtect(req, res, next) {
   try {
     const header = req.headers.authorization || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : null;
     if (!token) return res.status(401).json({ error: 'Not authorized — please sign in' });
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    if (decoded.scope !== 'billing') {
-      return res.status(401).json({ error: 'Not a billing token' });
-    }
+    // Throws if the signature, issuer, audience or scope is wrong.
+    const decoded = verify(token, SCOPES.BILLING);
 
     const user = await BillingUser.findById(decoded.id);
     if (!user) return res.status(401).json({ error: 'Account no longer exists' });

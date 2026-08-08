@@ -1,6 +1,8 @@
-const jwt = require('jsonwebtoken');
+const { sign } = require('../config/jwt');
 
-const generateToken = (id) =>
-  jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRE || '30d' });
+// Only the user id travels in the token. Role is deliberately left out and read
+// from the database on every request, so demoting an admin takes effect at once
+// instead of when their 30-day token happens to expire.
+const generateToken = (id) => sign({ id: String(id) });
 
 module.exports = { generateToken };

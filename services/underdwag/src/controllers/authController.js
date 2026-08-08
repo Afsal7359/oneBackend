@@ -1,14 +1,41 @@
-import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { OAuth2Client } from 'google-auth-library';
 import { UAParser } from 'ua-parser-js';
 import User from '../models/User.js';
 import { sendOtp } from '../services/email.js';
+import { sign, SCOPES } from '../config/jwt.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'nv_secret';
 const JWT_EXPIRES = '30d';
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 
-const makeToken = (id) => jwt.sign({ id }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+// The secret used to be read here as `process.env.JWT_SECRET || 'nv_secret'`:
+// if the .env failed to load, this service carried on issuing sessions signed
+// with a string published in its own source. config/jwt.js refuses to start
+// instead, and stamps scope=user so these tokens can't reach the admin or
+// billing guards.
+const makeToken = (id) => sign({ id: String(id) }, SCOPES.USER, { expiresIn: JWT_EXPIRES });
+
+// A verified code hands out a 30-day session, so it is worth only a handful of
+// guesses before it is burned and has to be re-requested — which is itself rate
+// limited. Without a cap, six digits falls to a script in minutes.
+const MAX_OTP_ATTEMPTS = 10;
+
+// crypto.randomInt, not Math.random: these codes reset passwords, so they have
+// to come from the CSPRNG rather than a PRNG seeded from process state.
+const genOtp = () => String(crypto.randomInt(100000, 1000000));
+
+// Constant-time compare so latency can't reveal how much of a guess was right.
+const otpMatches = (stored, guess) => {
+  const a = Buffer.from(String(stored || ''), 'utf8');
+  const b = Buffer.from(String(guess || ''), 'utf8');
+  return a.length > 0 && a.length === b.length && crypto.timingSafeEqual(a, b);
+};
+
+const burnOtp = (user) => {
+  user.otp = undefined;
+  user.otpExpiry = undefined;
+  user.otpAttempts = 0;
+};
 
 // ── Helper: capture device info from request ─────────────────────────────────
 const extractDevice = (req) => {
@@ -34,7 +61,7 @@ export const signup = async (req, res) => {
     const existing = await User.findOne({ email });
     if (existing && existing.isVerified) return res.status(409).json({ message: 'Email already registered' });
 
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const otp = genOtp();
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
 
     if (existing) {
@@ -42,9 +69,10 @@ export const signup = async (req, res) => {
       existing.password = password;
       existing.otp = otp;
       existing.otpExpiry = otpExpiry;
+      existing.otpAttempts = 0;
       await existing.save();
     } else {
-      await User.create({ name, email, password, otp, otpExpiry });
+      await User.create({ name, email, password, otp, otpExpiry, otpAttempts: 0 });
     }
 
     await sendOtp(email, otp);
@@ -59,15 +87,31 @@ export const signup = async (req, res) => {
 export const verifyOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
-    const user = await User.findOne({ email }).select('+otp +otpExpiry');
-    if (!user) return res.status(404).json({ message: 'User not found' });
-    if (user.otp !== otp) return res.status(400).json({ message: 'Invalid OTP' });
-    if (!user.otpExpiry || user.otpExpiry < new Date())
-      return res.status(400).json({ message: 'OTP expired' });
+    const user = await User.findOne({ email }).select('+otp +otpExpiry +otpAttempts');
+
+    // One vague message for every failure. "User not found" vs "Invalid OTP"
+    // told a caller exactly which email addresses have accounts here.
+    const invalid = () => res.status(400).json({ message: 'Invalid or expired code' });
+    if (!user || !user.otp || !user.otpExpiry) return invalid();
+
+    if (user.otpExpiry < new Date()) {
+      burnOtp(user);
+      await user.save();
+      return res.status(400).json({ message: 'Code expired' });
+    }
+    if ((user.otpAttempts || 0) >= MAX_OTP_ATTEMPTS) {
+      burnOtp(user);
+      await user.save();
+      return res.status(400).json({ message: 'Too many attempts. Please request a new code.' });
+    }
+    if (!otpMatches(user.otp, otp)) {
+      user.otpAttempts = (user.otpAttempts || 0) + 1;
+      await user.save();
+      return invalid();
+    }
 
     user.isVerified = true;
-    user.otp = undefined;
-    user.otpExpiry = undefined;
+    burnOtp(user);
     user.lastLoginAt = new Date();
     user.deviceInfo.push(extractDevice(req));
     await user.save();
@@ -88,9 +132,10 @@ export const resendOtp = async (req, res) => {
     if (!user) return res.status(404).json({ message: 'User not found' });
     if (user.isVerified) return res.status(400).json({ message: 'Already verified' });
 
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const otp = genOtp();
     user.otp = otp;
     user.otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+    user.otpAttempts = 0;
     await user.save();
     await sendOtp(email, otp);
     res.json({ message: 'OTP resent' });
@@ -186,18 +231,22 @@ export const forgotPassword = async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ message: 'Email required' });
 
-    const user = await User.findOne({ email });
-    if (!user || !user.isVerified) {
-      return res.status(404).json({ message: 'No account found with that email address.' });
-    }
+    // Always the same answer. A 404 here confirmed which email addresses have
+    // verified accounts, which is a ready-made target list for the login and
+    // reset-code endpoints.
+    const resp = { message: 'If that email has an account, a reset code has been sent.' };
 
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const user = await User.findOne({ email });
+    if (!user || !user.isVerified) return res.json(resp);
+
+    const otp = genOtp();
     user.otp = otp;
     user.otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+    user.otpAttempts = 0;
     await user.save();
 
     await sendOtp(email, otp, 'Reset your underdawg password');
-    res.json({ message: 'Reset code sent.' });
+    res.json(resp);
   } catch (err) {
     console.error('forgotPassword error', err);
     res.status(500).json({ message: 'Server error' });
@@ -211,14 +260,32 @@ export const resetPassword = async (req, res) => {
     if (!email || !otp || !password) return res.status(400).json({ message: 'Email, OTP, and new password required' });
     if (password.length < 8) return res.status(400).json({ message: 'Password must be at least 8 characters' });
 
-    const user = await User.findOne({ email }).select('+otp +otpExpiry');
-    if (!user) return res.status(404).json({ message: 'User not found' });
-    if (user.otp !== otp) return res.status(400).json({ message: 'Invalid code' });
-    if (!user.otpExpiry || user.otpExpiry < new Date()) return res.status(400).json({ message: 'Code expired' });
+    const user = await User.findOne({ email }).select('+otp +otpExpiry +otpAttempts');
+
+    // Same vague failure as verify-otp, and the same attempt cap — this
+    // endpoint sets a password, so it was the more valuable of the two to
+    // brute-force and it had no counter at all.
+    const invalid = () => res.status(400).json({ message: 'Invalid or expired code' });
+    if (!user || !user.otp || !user.otpExpiry) return invalid();
+
+    if (user.otpExpiry < new Date()) {
+      burnOtp(user);
+      await user.save();
+      return res.status(400).json({ message: 'Code expired' });
+    }
+    if ((user.otpAttempts || 0) >= MAX_OTP_ATTEMPTS) {
+      burnOtp(user);
+      await user.save();
+      return res.status(400).json({ message: 'Too many attempts. Please request a new code.' });
+    }
+    if (!otpMatches(user.otp, otp)) {
+      user.otpAttempts = (user.otpAttempts || 0) + 1;
+      await user.save();
+      return invalid();
+    }
 
     user.password = password; // pre-save hook will hash it
-    user.otp = undefined;
-    user.otpExpiry = undefined;
+    burnOtp(user);
     await user.save();
 
     const token = makeToken(user._id);

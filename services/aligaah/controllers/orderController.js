@@ -75,7 +75,7 @@ function assertShipping(req, res) {
 
 // Rebuild items/totals from the DB so prices/discounts are always trusted.
 async function computeOrder(body, res) {
-  const { items = [], couponCode, shippingFee = 0 } = body;
+  const { items = [], couponCode } = body;
   const dbItems = [];
   let itemsTotal = 0;
   for (const it of items) {
@@ -109,8 +109,53 @@ async function computeOrder(body, res) {
       couponDoc = coupon;
     }
   }
-  const grandTotal = Math.max(0, itemsTotal - couponData.discount) + Number(shippingFee);
-  return { dbItems, itemsTotal, couponData, couponDoc, grandTotal, shippingFee: Number(shippingFee) };
+  // Shipping is derived here, never read from the request. The client used to
+  // send its own `shippingFee`, which meant a crafted order could set it to 0 —
+  // or to a negative number and pay less than the goods are worth.
+  const settings = await Settings.getSingleton();
+  const shippingFee = shippingFeeFor(settings, body.shipping?.state, itemsTotal);
+
+  const courier = resolveCourier(settings, body.courier);
+
+  const grandTotal = Math.max(0, itemsTotal - couponData.discount) + shippingFee;
+  return { dbItems, itemsTotal, couponData, couponDoc, grandTotal, shippingFee, courier };
+}
+
+/**
+ * Delivery inside the shop's home state is charged at one rate, everywhere else
+ * at another; a cart over `freeAbove` ships free regardless of where it goes.
+ *
+ * Exported so the storefront's quote endpoint and the order path can never
+ * disagree about the number the customer was shown.
+ */
+function shippingFeeFor(settings, state, itemsTotal) {
+  const sh = settings?.shipping || {};
+  const freeAbove = Number(sh.freeAbove) || 0;
+  if (freeAbove > 0 && itemsTotal >= freeAbove) return 0;
+
+  const home = String(sh.homeState || 'Kerala').trim().toLowerCase();
+  const to = String(state || '').trim().toLowerCase();
+
+  // An unrecognised or missing state is treated as "outside": the safe default
+  // is to charge, not to give away delivery on a malformed address.
+  const inside = to && to === home;
+  const fee = inside ? sh.insideStateFee : sh.outsideStateFee;
+
+  // flatFee is the older single-rate setting; it still applies for a shop that
+  // never configured the state-based ones.
+  const resolved = fee === undefined || fee === null || fee === '' ? sh.flatFee : fee;
+  return Math.max(0, Number(resolved) || 0);
+}
+
+/** Only an active, configured partner is accepted — never free text from the client. */
+function resolveCourier(settings, chosen) {
+  const list = (settings?.couriers || []).filter((c) => c.isActive !== false);
+  if (!list.length) return { name: '', description: '' };
+  const match = list.find((c) => c.name === chosen);
+  const pick = match || list[0];
+  // Snapshotted so the order still reads correctly if the partner's note is
+  // later edited or the partner is removed altogether.
+  return { name: pick.name, description: pick.description || '' };
 }
 
 // Stock/sales counters and coupon usage — applied once, when an order becomes
@@ -132,6 +177,7 @@ function orderDocFrom(c, body, user, extra = {}) {
     itemsTotal: c.itemsTotal,
     coupon: c.couponData,
     shippingFee: c.shippingFee,
+    courier: c.courier,
     grandTotal: c.grandTotal,
     ...extra,
   };
@@ -344,7 +390,23 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
   res.json(order);
 });
 
+// @route POST /api/orders/quote (public) — what will this cart cost to ship?
+// The storefront must not compute this itself, or the figure on the summary can
+// drift from the figure the order is actually created with.
+const quote = asyncHandler(async (req, res) => {
+  const settings = await Settings.getSingleton();
+  const itemsTotal = Number(req.body.itemsTotal) || 0;
+  const state = req.body.state || '';
+  res.json({
+    shippingFee: shippingFeeFor(settings, state, itemsTotal),
+    homeState: settings.shipping?.homeState || 'Kerala',
+    freeAbove: Number(settings.shipping?.freeAbove) || 0,
+  });
+});
+
 module.exports = {
+  quote,
+  shippingFeeFor,
   createOrder, createRazorpayOrder, verifyPayment, markPaymentFailed, razorpayWebhook,
   getOrders, getMyOrders, updateOrderStatus,
 };

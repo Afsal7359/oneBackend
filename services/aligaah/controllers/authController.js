@@ -6,7 +6,60 @@ const { sendMail, otpEmail } = require('../utils/email');
 
 const publicUser = (u) => ({ _id: u._id, name: u.name, email: u.email, role: u.role, phone: u.phone });
 const hashOtp = (otp) => crypto.createHash('sha256').update(String(otp)).digest('hex');
-const genOtp = () => String(Math.floor(100000 + Math.random() * 900000)); // 6 digits
+
+// crypto.randomInt, not Math.random. Math.random is a fast PRNG seeded from
+// process state and is not meant to be unguessable — for a code that resets a
+// password (including the admin's) it has to come from the CSPRNG.
+const genOtp = () => String(crypto.randomInt(100000, 1000000)); // 6 digits
+
+// Compares in constant time so response latency can't be used to learn how many
+// leading characters of a guessed code were right.
+const otpMatches = (stored, guess) => {
+  const a = Buffer.from(String(stored || ''), 'utf8');
+  const b = Buffer.from(hashOtp(guess), 'utf8');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+};
+
+// A reset code is only ever worth a handful of guesses. Ten wrong answers burns
+// the code, so an attacker has to request a new one and hit the send-side rate
+// limit — that's what makes a 6-digit space safe.
+const MAX_OTP_ATTEMPTS = 10;
+
+const clearOtp = (user) => {
+  user.resetOtp = undefined;
+  user.resetOtpExpires = undefined;
+  user.resetOtpAttempts = 0;
+};
+
+/**
+ * Shared gate for verify-otp and reset-password. Returns the user on success;
+ * on failure it has already thrown with a deliberately vague message, so the
+ * caller can't be used to probe which emails have a reset in flight.
+ */
+const consumeOtpCheck = async (res, email, otp) => {
+  const user = await User.findOne({ email: (email || '').toLowerCase() })
+    .select('+resetOtp +resetOtpExpires +resetOtpAttempts +password');
+
+  const reject = (msg) => { res.status(400); throw new Error(msg); };
+
+  if (!user || !user.resetOtp || !user.resetOtpExpires) reject('Invalid or expired code');
+  if (user.resetOtpExpires < new Date()) {
+    clearOtp(user);
+    await user.save();
+    reject('Code expired — please request a new one');
+  }
+  if ((user.resetOtpAttempts || 0) >= MAX_OTP_ATTEMPTS) {
+    clearOtp(user);
+    await user.save();
+    reject('Too many attempts — please request a new code');
+  }
+  if (!otpMatches(user.resetOtp, otp)) {
+    user.resetOtpAttempts = (user.resetOtpAttempts || 0) + 1;
+    await user.save();
+    reject('Invalid or expired code');
+  }
+  return user;
+};
 
 // @route POST /api/auth/register
 const register = asyncHandler(async (req, res) => {
@@ -64,22 +117,33 @@ const forgotPassword = asyncHandler(async (req, res) => {
   const otp = genOtp();
   user.resetOtp = hashOtp(otp);
   user.resetOtpExpires = new Date(Date.now() + 10 * 60 * 1000);
+  user.resetOtpAttempts = 0;
   await user.save();
 
   const mail = otpEmail(otp, user.name);
   const { sent } = await sendMail({ to: user.email, ...mail });
-  // In dev (no SMTP configured), surface the OTP so the flow is testable.
-  if (!sent && process.env.NODE_ENV !== 'production') resp.devOtp = otp;
+
+  // The reset code is NEVER put in the response. It used to be echoed back
+  // whenever SMTP was down and NODE_ENV wasn't exactly 'production' — and this
+  // service's own .env carries NODE_ENV=development. One `node server.js`
+  // started outside PM2 (which is what supplies NODE_ENV=production) turned
+  // "forgot password for admin@aligaah.com" into a handed-over admin account.
+  // Local testing reads the code from the server log instead, behind an opt-in
+  // flag that has to be set deliberately and is never set on the server.
+  if (!sent) {
+    if (process.env.ALLOW_DEV_OTP === 'true') {
+      console.log(`[aligaah][dev] reset code for ${user.email}: ${otp}`);
+    } else {
+      console.warn(`[aligaah] could not email a reset code to ${user.email} — check SMTP settings`);
+    }
+  }
   res.json(resp);
 });
 
 // @route POST /api/auth/verify-otp  { email, otp }
 const verifyOtp = asyncHandler(async (req, res) => {
   const { email, otp } = req.body;
-  const user = await User.findOne({ email: (email || '').toLowerCase() }).select('+resetOtp +resetOtpExpires');
-  if (!user || !user.resetOtp || !user.resetOtpExpires) { res.status(400); throw new Error('No reset request found'); }
-  if (user.resetOtpExpires < new Date()) { res.status(400); throw new Error('Code expired — please request a new one'); }
-  if (user.resetOtp !== hashOtp(otp)) { res.status(400); throw new Error('Invalid code'); }
+  await consumeOtpCheck(res, email, otp);
   res.json({ ok: true });
 });
 
@@ -87,15 +151,11 @@ const verifyOtp = asyncHandler(async (req, res) => {
 const resetPassword = asyncHandler(async (req, res) => {
   const { email, otp, password } = req.body;
   if (!password || password.length < 6) { res.status(400); throw new Error('Password must be at least 6 characters'); }
-  const user = await User.findOne({ email: (email || '').toLowerCase() }).select('+resetOtp +resetOtpExpires +password');
-  if (!user || !user.resetOtp || !user.resetOtpExpires) { res.status(400); throw new Error('No reset request found'); }
-  if (user.resetOtpExpires < new Date()) { res.status(400); throw new Error('Code expired — please request a new one'); }
-  if (user.resetOtp !== hashOtp(otp)) { res.status(400); throw new Error('Invalid code'); }
+  const user = await consumeOtpCheck(res, email, otp);
 
   user.password = password;
   user.isGuest = false;
-  user.resetOtp = undefined;
-  user.resetOtpExpires = undefined;
+  clearOtp(user);
   await user.save();
   res.json({ ...publicUser(user), token: generateToken(user._id) });
 });

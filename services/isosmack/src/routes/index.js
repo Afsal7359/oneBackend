@@ -21,15 +21,32 @@ import * as catalog from '../controllers/adminCatalog.controller.js';
 
 const router = Router();
 
+// Keyed on the real client rather than `req.ip`. The chain here is
+// nginx -> gateway -> service, and `app.set('trust proxy', 1)` only walks back
+// one hop, so `req.ip` resolved to the gateway (127.0.0.1) for everyone: the
+// limiter was one shared counter that throttled genuine shoppers while leaving
+// plenty of headroom for an attacker. nginx sets X-Real-IP by *replacing* it
+// (X-Forwarded-For is appended to, so its leftmost entry is caller-controlled
+// and unusable as a key), and the gateway passes it through untouched.
+const clientKey = (req) =>
+  req.headers['x-real-ip'] || req.socket?.remoteAddress || req.ip || 'unknown';
+
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 20,
+  keyGenerator: clientKey,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many attempts — please try again in 15 minutes' },
 });
 
-const writeLimiter = rateLimit({ windowMs: 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false });
+const writeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 30,
+  keyGenerator: clientKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 /* ---------------------------------------------------------------------- auth */
 const authRoutes = Router();

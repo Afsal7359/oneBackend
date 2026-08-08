@@ -11,6 +11,26 @@ const { notFound, errorHandler } = require('./middleware/error');
 const app = express();
 connectDB();
 
+// `X-Powered-By: Express` tells a scanner exactly which CVE list to work
+// through. Nothing needs it.
+app.disable('x-powered-by');
+
+// Baseline response headers. This is a JSON API — no HTML is ever served from
+// here — so the policy is simply "this is not a document, do not render it,
+// do not sniff it, do not frame it". Written by hand rather than pulling in
+// helmet, which would mean a new dependency to install on every deploy.
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+});
+
 // Product listings are mostly repeated JSON keys and gzip to a fraction of
 // their size. Less to transfer is less time on the wire for the shopper.
 app.use(compression());
@@ -20,7 +40,33 @@ app.use(compression());
 // carry `X-Cache: HIT`.
 app.use(serverTiming());
 
-app.use(cors({ origin: (process.env.CLIENT_URL || '*').split(','), credentials: true }));
+// CORS allowlist. `CLIENT_URL` is comma separated; entries are trimmed and
+// stripped of a trailing slash because "https://site.com/" never matches the
+// browser's Origin header and the resulting failure looks like a server outage.
+//
+// There is no wildcard fallback. It used to read `process.env.CLIENT_URL || '*'`
+// — with `credentials: true` that combination is the one CORS setup that lets
+// any site on the internet make authenticated calls with a visitor's cookies.
+// Missing config now means no cross-origin access, which fails loudly and safely.
+const allowedOrigins = (process.env.CLIENT_URL || '')
+  .split(',')
+  .map((o) => o.trim().replace(/\/$/, ''))
+  .filter(Boolean);
+
+if (!allowedOrigins.length) {
+  console.warn('[aligaah] CLIENT_URL is not set — all cross-origin browser requests will be blocked.');
+}
+
+app.use(cors({
+  origin(origin, cb) {
+    // No Origin header = same-origin, curl, or a server-to-server call. Those
+    // are not what CORS defends against, so they pass.
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes(origin.replace(/\/$/, ''))) return cb(null, true);
+    cb(new Error(`CORS: origin ${origin} is not allowed`));
+  },
+  credentials: true,
+}));
 // Keep the untouched bytes around: the Razorpay webhook signature is an HMAC
 // over the exact raw body, so re-serialising the parsed JSON would break it.
 app.use(express.json({

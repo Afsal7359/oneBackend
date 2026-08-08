@@ -1,16 +1,24 @@
-import jwt from 'jsonwebtoken';
 import Admin from '../models/Admin.js';
-import User from '../models/User.js';
+import { verify, SCOPES } from '../config/jwt.js';
 
+const bearer = (raw) => {
+  const header = raw || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : header;
+  return String(token).trim() || null;
+};
+
+// Site-admin guard. The token must be stamped scope=admin *and* still resolve
+// to a live Admin document, so a deleted admin's 30-day token stops working the
+// moment the record goes.
 export async function protect(req, res, next) {
   try {
-    const header = req.headers.authorization || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    const token = bearer(req.headers.authorization);
     if (!token) return res.status(401).json({ message: 'Not authorized, no token' });
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = verify(token, SCOPES.ADMIN);
     const admin = await Admin.findById(decoded.id);
-    if (!admin) return res.status(401).json({ message: 'Admin not found' });
+    // Same message either way — "Admin not found" confirmed which ids are real.
+    if (!admin) return res.status(401).json({ message: 'Not authorized, token invalid' });
 
     req.admin = admin;
     next();
@@ -19,30 +27,29 @@ export async function protect(req, res, next) {
   }
 }
 
-// User JWT middleware (optional — sets req.userId if valid token present)
+// Storefront-customer guard.
+//
+// This used to accept any token this service could verify and trust
+// `decoded.id` as a user id — so an admin token (same secret, no scope) sailed
+// through it. Demanding scope=user is what keeps the two audiences apart.
 export async function userAuth(req, res, next) {
   try {
-    const header = req.headers['x-user-token'] || req.headers.authorization || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7) : header || null;
+    const token = bearer(req.headers['x-user-token'] || req.headers.authorization);
     if (!token) return res.status(401).json({ message: 'Not authorized' });
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.userId = decoded.id;
+    req.userId = verify(token, SCOPES.USER).id;
     next();
   } catch (err) {
     res.status(401).json({ message: 'Not authorized, token invalid' });
   }
 }
 
-// Soft user auth — attaches userId if token present, but does not block
+// Soft user auth — attaches userId if a valid user token is present, but does
+// not block.
 export function softUserAuth(req, _res, next) {
   try {
-    const header = req.headers['x-user-token'] || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7) : header || null;
-    if (token) {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.userId = decoded.id;
-    }
+    const token = bearer(req.headers['x-user-token']);
+    if (token) req.userId = verify(token, SCOPES.USER).id;
   } catch (_) { /* ignore */ }
   next();
 }

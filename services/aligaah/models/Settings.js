@@ -54,8 +54,29 @@ const settingsSchema = new mongoose.Schema(
       extraNote: { type: String, default: '' },  // optional admin addition
     },
     shipping: {
-      freeAbove: { type: Number, default: 0 },
-      flatFee: { type: Number, default: 0 },
+      freeAbove: { type: Number, default: 0 },   // 0 = off; cart value that ships free anywhere
+      flatFee: { type: Number, default: 0 },     // legacy single rate, kept as the fallback below
+
+      // Rate depends on where the parcel is going. The home state is stored
+      // rather than hard-coded to "Kerala" so the shop can move or expand
+      // without a code change.
+      homeState: { type: String, default: 'Kerala' },
+      insideStateFee: { type: Number, default: 0 },
+      outsideStateFee: { type: Number, default: 0 },
+    },
+
+    // Delivery partners offered at checkout. The note is the customer-facing
+    // line under each option — typically the delivery window.
+    couriers: {
+      type: [new mongoose.Schema(
+        {
+          name: { type: String, required: true, trim: true },
+          description: { type: String, default: '', trim: true },
+          isActive: { type: Boolean, default: true },
+        },
+        { _id: false }
+      )],
+      default: [],
     },
     currency: { type: String, default: '₹' },
     // Payment options (admin-controlled)

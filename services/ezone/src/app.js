@@ -21,6 +21,7 @@ import blogRoutes from './routes/blog.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import { notFound, errorHandler } from './middleware/error.middleware.js';
 import { serverTiming } from './utils/responseCache.js';
+import { clientKey } from './utils/clientKey.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,9 +34,33 @@ app.use(compression());
 // panel; cached responses also carry `X-Cache: HIT`.
 app.use(serverTiming());
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+
+// No wildcard fallback. `process.env.CLIENT_URL?.split(',') || '*'` meant an
+// unset CLIENT_URL served `Access-Control-Allow-Origin: *` from an API that
+// also sets `credentials: true` — the one CORS combination that hands the whole
+// surface to any page on the internet. Missing config now blocks cross-origin
+// browser calls, which fails visibly instead of silently opening up.
+// Entries are trimmed and stripped of a trailing slash, because
+// "https://site.com/" never matches the browser's Origin header and the
+// resulting failure reads like the API being down.
+const allowedOrigins = (process.env.CLIENT_URL || '')
+  .split(',')
+  .map((o) => o.trim().replace(/\/$/, ''))
+  .filter(Boolean);
+
+if (!allowedOrigins.length) {
+  console.warn('[ezone] CLIENT_URL is not set — all cross-origin browser requests will be blocked.');
+}
+
 app.use(
   cors({
-    origin: process.env.CLIENT_URL?.split(',') || '*',
+    origin(origin, cb) {
+      // No Origin header = same-origin, curl, or server-to-server. Not what
+      // CORS defends against.
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.includes(origin.replace(/\/$/, ''))) return cb(null, true);
+      cb(new Error(`CORS: origin ${origin} is not allowed`));
+    },
     credentials: true,
   })
 );
@@ -49,11 +74,17 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 /* ------------------------------ Rate limiter ------------------------------ */
+// Keyed on the real client, not `req.ip`. Behind nginx -> gateway every request
+// looks like 127.0.0.1, so this was a single shared 500-request budget for the
+// whole internet: it throttled genuine shoppers without slowing an attacker who
+// only needs a fraction of it. See utils/clientKey.js for why X-Real-IP rather
+// than X-Forwarded-For.
 app.use(
   '/api/',
   rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 500,
+    keyGenerator: clientKey,
     standardHeaders: true,
     legacyHeaders: false,
   })

@@ -229,8 +229,12 @@ export const forgotPassword = asyncHandler(async (req, res) => {
   const { email } = req.body;
   if (!email) { res.status(400); throw new Error('Email is required'); }
 
+  // Always the same answer. The old 404 confirmed which email addresses have
+  // accounts here, which is a ready-made target list for the login endpoint.
+  const resp = { success: true, message: 'If that email has an account, a code has been sent.' };
+
   const user = await User.findOne({ email: email.toLowerCase() });
-  if (!user) { res.status(404); throw new Error('No account found with this email'); }
+  if (!user) return res.json(resp);
 
   const otp = generateOtp();
   setOtp('fp_' + email.toLowerCase(), otp);
@@ -238,12 +242,12 @@ export const forgotPassword = asyncHandler(async (req, res) => {
   try {
     await sendForgotPasswordOtp(email, otp);
   } catch (err) {
+    // Logged, not returned: an SMTP-specific error is another way to tell an
+    // attacker that the account exists.
     console.error('[forgotPassword] SMTP error:', err.message);
-    res.status(500);
-    throw new Error('Failed to send OTP. Check SMTP settings.');
   }
 
-  res.json({ success: true, message: 'OTP sent to your email' });
+  res.json(resp);
 });
 
 /* ── @route POST /api/auth/reset-password ───────────────────────── */

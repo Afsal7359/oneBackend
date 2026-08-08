@@ -2,6 +2,9 @@ const router = require('express').Router();
 const c = require('../controllers/orderController');
 const { protect, optionalAuth, admin } = require('../middleware/auth');
 
+// Public: the cart needs a shipping figure before there is an order.
+router.post('/quote', c.quote);
+
 router.post('/', optionalAuth, c.createOrder);
 router.post('/razorpay', optionalAuth, c.createRazorpayOrder);
 router.post('/razorpay/failed', c.markPaymentFailed);

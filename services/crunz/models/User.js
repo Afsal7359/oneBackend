@@ -22,6 +22,9 @@ const userSchema = new mongoose.Schema({
   isAdmin: { type: Boolean, default: false },
   otp: { type: String, select: false },
   otpExpiry: { type: Date, select: false },
+  // Wrong guesses against the current code. Hitting the cap burns the code,
+  // which is what keeps a 6-digit space out of brute-force range.
+  otpAttempts: { type: Number, default: 0, select: false },
   addresses: [addressSchema],
   createdAt: { type: Date, default: Date.now }
 });

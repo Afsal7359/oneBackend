@@ -1,6 +1,6 @@
-import jwt from 'jsonwebtoken';
+import { sign } from '../config/jwt.js';
 
-export const generateToken = (id) =>
-  jwt.sign({ id }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || '30d',
-  });
+// Only the user id travels in the token. Role is read from the database on
+// every request, so revoking an admin takes effect immediately instead of
+// whenever their 30-day token happens to expire.
+export const generateToken = (id) => sign({ id: String(id) });

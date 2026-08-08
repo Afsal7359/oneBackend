@@ -2,17 +2,20 @@ const router          = require('express').Router();
 const stripe          = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const Order           = require('../models/Order');
 const Coupon          = require('../models/Coupon');
-const jwt             = require('jsonwebtoken');
 const User            = require('../models/User');
+const { verify }      = require('../config/jwt');
 const { sendOrderConfirmation, sendAdminNotification } = require('../utils/mailer');
 
-// Optionally extract user from token (no error if not logged in)
+// Optionally extract user from token (no error if not logged in).
+// Goes through config/jwt so the iss/aud = crunz check applies here too — this
+// is the one place that used to call jwt.verify directly and would otherwise
+// have stayed willing to accept a sibling service's token.
 async function optionalUser(req) {
   try {
     const header = req.headers.authorization || '';
     if (!header.startsWith('Bearer ')) return null;
-    const token = header.slice(7);
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = verify(header.slice(7).trim());
+    if (!decoded?.id) return null;
     return await User.findById(decoded.id).select('_id name email');
   } catch { return null; }
 }

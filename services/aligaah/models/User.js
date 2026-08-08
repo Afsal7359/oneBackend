@@ -11,6 +11,9 @@ const userSchema = new mongoose.Schema(
     isGuest: { type: Boolean, default: false },
     resetOtp: { type: String, select: false },
     resetOtpExpires: { type: Date, select: false },
+    // Wrong guesses against the current reset code. Ten burns the code, which
+    // is what keeps a 6-digit space out of brute-force range.
+    resetOtpAttempts: { type: Number, default: 0, select: false },
     phone: { type: String, default: '' },
     addresses: [
       {

@@ -25,6 +25,12 @@ const orderSchema = new mongoose.Schema(
       line1: String, line2: String, city: String,
       state: String, pincode: String, country: { type: String, default: 'India' },
     },
+    // Snapshot of the partner chosen at checkout, so the order still reads
+    // correctly after the settings list changes.
+    courier: {
+      name: { type: String, default: '' },
+      description: { type: String, default: '' },
+    },
     itemsTotal: { type: Number, default: 0 },
     coupon: { code: String, discount: { type: Number, default: 0 } },
     shippingFee: { type: Number, default: 0 },
