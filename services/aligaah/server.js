@@ -63,7 +63,9 @@ app.use(cors({
     // are not what CORS defends against, so they pass.
     if (!origin) return cb(null, true);
     if (allowedOrigins.includes(origin.replace(/\/$/, ''))) return cb(null, true);
-    cb(new Error(`CORS: origin ${origin} is not allowed`));
+    const err = new Error(`CORS: origin ${origin} is not allowed`);
+    err.status = 403; // a refusal, not a server fault — see middleware/error.js
+    cb(err);
   },
   credentials: true,
 }));

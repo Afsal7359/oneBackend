@@ -7,6 +7,11 @@ export const errorHandler = (err, req, res, _next) => {
   let statusCode = res.statusCode && res.statusCode !== 200 ? res.statusCode : 500;
   let message = err.message || 'Server Error';
 
+  // Middleware that runs before any route can't set res.statusCode first, so it
+  // carries its own status. Without this a blocked CORS origin was reported as
+  // a 500, which reads like the API is broken rather than doing its job.
+  if (Number.isInteger(err?.status)) statusCode = err.status;
+
   // Mongoose bad ObjectId
   if (err.name === 'CastError' && err.kind === 'ObjectId') {
     statusCode = 404;

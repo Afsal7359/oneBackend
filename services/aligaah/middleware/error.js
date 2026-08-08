@@ -7,6 +7,12 @@ const errorHandler = (err, req, res, next) => {
   let status = res.statusCode === 200 ? 500 : res.statusCode;
   let message = err && err.message;
 
+  // Errors thrown from middleware that runs before any route can't set
+  // res.statusCode first, so they carry their own. Without this a blocked CORS
+  // origin was reported as a 500 — it logged a stack trace on every hit and
+  // read like the API was broken rather than doing its job.
+  if (Number.isInteger(err?.status)) status = err.status;
+
   // Mongoose bad ObjectId
   if (err.name === 'CastError' && err.kind === 'ObjectId') {
     status = 404;

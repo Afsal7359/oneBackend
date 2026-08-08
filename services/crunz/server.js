@@ -26,18 +26,28 @@ if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 connectDB();
 
 // Middleware
+// The localhost entries are development-only. They used to be in the list
+// unconditionally, which meant a page served from a laptop on the same network
+// could make credentialed calls against production.
+const devOrigins = process.env.NODE_ENV === 'production'
+  ? []
+  : ['http://localhost:3000', 'http://localhost:3001'];
+
 const allowedOrigins = [
-  (process.env.CLIENT_URL || 'http://localhost:3000').replace(/\/$/, ''),
-  'http://localhost:3000',
-  'http://localhost:3001',
+  ...(process.env.CLIENT_URL || '').split(','),
+  ...devOrigins,
   'https://getcrunz.com',
   'https://www.getcrunz.com',
-];
+].map((o) => o.trim().replace(/\/$/, '')).filter(Boolean);
+
 app.use(cors({
   origin: (origin, cb) => {
     // allow server-to-server requests (no origin) and listed origins
-    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
-    cb(new Error(`CORS: origin ${origin} not allowed`));
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes(origin.replace(/\/$/, ''))) return cb(null, true);
+    const err = new Error(`CORS: origin ${origin} not allowed`);
+    err.status = 403; // a refusal, not a server fault
+    cb(err);
   },
   credentials: true
 }));
@@ -110,6 +120,9 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`\n🍌 Crunz Backend running on http://localhost:${PORT}`);
-  console.log(`   MongoDB: ${process.env.MONGODB_URI}`);
-  console.log(`   Client:  ${process.env.CLIENT_URL || 'http://localhost:3000'}\n`);
+  // Host and database only — the full URI carries the Atlas password, and this
+  // line was putting it into the PM2 log file on every restart.
+  const dbHost = (process.env.MONGODB_URI || '').replace(/^mongodb(\+srv)?:\/\/[^@]*@/, '');
+  console.log(`   MongoDB: ${dbHost || '(not configured)'}`);
+  console.log(`   Client:  ${allowedOrigins.join(', ') || '(none allowed)'}\n`);
 });
